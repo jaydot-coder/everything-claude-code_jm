@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:scrawny-aunt-e07.notion.site)",
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(python:*)",
+      "Bash(node:*)",
+      "WebSearch",
+      "WebFetch(domain:www.modoodoc.com)",
+      "WebFetch(domain:www.hamchoon.co.kr)",
+      "Bash(bash:*)",
+      "Bash(winget install:*)",
+      "Bash(where jq:*)",
+      "Read(//c/Users/jamin/AppData/Local/Microsoft/WinGet/**)",
+      "Bash(git add:*)"
+    ]
+  }
+}

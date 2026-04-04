@@ -1,60 +1,60 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+이 파일은 이 리포지토리의 코드로 작업할 때 Claude Code (claude.ai/code) 에 대한 지침을 제공합니다.
 
-## Project Overview
+## 프로젝트 개요
 
-This is a **Claude Code plugin** - a collection of production-ready agents, skills, hooks, commands, rules, and MCP configurations. The project provides battle-tested workflows for software development using Claude Code.
+이것은 **Claude Code 플러그인**입니다. 프로덕션 수준의 에이전트, 스킬, 훅, 명령어, 규칙, 그리고 MCP 설정 모음입니다. 이 프로젝트는 Claude Code를 사용하여 소프트웨어 개발을 할 때 검증된(battle-tested) 워크플로우를 제공합니다.
 
-## Running Tests
+## 테스트 실행
 
 ```bash
-# Run all tests
+# 모든 테스트 실행
 node tests/run-all.js
 
-# Run individual test files
+# 개별 테스트 파일 실행
 node tests/lib/utils.test.js
 node tests/lib/package-manager.test.js
 node tests/hooks/hooks.test.js
 ```
 
-## Architecture
+## 아키텍처
 
-The project is organized into several core components:
+이 프로젝트는 몇 가지 핵심 컴포넌트로 구성되어 있습니다:
 
-- **agents/** - Specialized subagents for delegation (planner, code-reviewer, tdd-guide, etc.)
-- **skills/** - Workflow definitions and domain knowledge (coding standards, patterns, testing)
-- **commands/** - Slash commands invoked by users (/tdd, /plan, /e2e, etc.)
-- **hooks/** - Trigger-based automations (session persistence, pre/post-tool hooks)
-- **rules/** - Always-follow guidelines (security, coding style, testing requirements)
-- **mcp-configs/** - MCP server configurations for external integrations
-- **scripts/** - Cross-platform Node.js utilities for hooks and setup
-- **tests/** - Test suite for scripts and utilities
+- **agents/** - 위임할 특화된 서브에이전트 (planner, code-reviewer, tdd-guide 등)
+- **skills/** - 워크플로우 정의 및 도메인 지식 (코딩 표준, 패턴, 테스트)
+- **commands/** - 사용자가 호출하는 슬래시 명령어 (/tdd, /plan, /e2e 등)
+- **hooks/** - 트리거 기반 자동화 (세션 유지, 도구 사용 전/후 훅)
+- **rules/** - 항상 따라야 하는 지침 (보안, 코딩 스타일, 테스트 요구사항)
+- **mcp-configs/** - 외부 연동을 위한 MCP 서버 설정
+- **scripts/** - 훅 및 설정을 위한 크로스 플랫폼 Node.js 유틸리티
+- **tests/** - 스크립트 및 유틸리티를 위한 테스트 스위트
 
-## Key Commands
+## 주요 명령어
 
-- `/tdd` - Test-driven development workflow
-- `/plan` - Implementation planning
-- `/e2e` - Generate and run E2E tests
-- `/code-review` - Quality review
-- `/build-fix` - Fix build errors
-- `/learn` - Extract patterns from sessions
-- `/skill-create` - Generate skills from git history
+- `/tdd` - 테스트 주도 개발 워크플로우
+- `/plan` - 구현 계획
+- `/e2e` - E2E 테스트 생성 및 실행
+- `/code-review` - 품질 리뷰
+- `/build-fix` - 빌드 에러 해결
+- `/learn` - 세션에서 패턴 추출
+- `/skill-create` - Git 히스토리에서 스킬 생성
 
-## Development Notes
+## 개발 참고사항
 
-- Package manager detection: npm, pnpm, yarn, bun (configurable via `CLAUDE_PACKAGE_MANAGER` env var or project config)
-- Cross-platform: Windows, macOS, Linux support via Node.js scripts
-- Agent format: Markdown with YAML frontmatter (name, description, tools, model)
-- Skill format: Markdown with clear sections for when to use, how it works, examples
-- Hook format: JSON with matcher conditions and command/notification hooks
+- 패키지 매니저 감지: npm, pnpm, yarn, bun (`CLAUDE_PACKAGE_MANAGER` 환경 변수 또는 프로젝트 설정을 통해 구성 가능)
+- 크로스 플랫폼: Node.js 스크립트를 통한 Windows, macOS, Linux 지원
+- 에이전트 형식: YAML 프론트매터(name, description, tools, model)가 있는 Markdown
+- 스킬 형식: 언제 사용해야 하는지, 작동 방식, 예시 등의 명확한 섹션이 있는 Markdown
+- 훅 형식: 매처(matcher) 조건 및 명령어/알림 훅이 있는 JSON
 
-## Contributing
+## 기여하기
 
-Follow the formats in CONTRIBUTING.md:
-- Agents: Markdown with frontmatter (name, description, tools, model)
-- Skills: Clear sections (When to Use, How It Works, Examples)
-- Commands: Markdown with description frontmatter
-- Hooks: JSON with matcher and hooks array
+CONTRIBUTING.md의 형식을 따르세요:
+- Agents: 프론트매터(name, description, tools, model)가 있는 Markdown
+- Skills: 명확한 섹션 (When to Use, How It Works, Examples)
+- Commands: 설명 프론트매터가 있는 Markdown
+- Hooks: 매처 및 hooks 배열이 있는 JSON
 
-File naming: lowercase with hyphens (e.g., `python-reviewer.md`, `tdd-workflow.md`)
+파일 명명 규칙: 하이픈이 포함된 소문자 (예: `python-reviewer.md`, `tdd-workflow.md`)
