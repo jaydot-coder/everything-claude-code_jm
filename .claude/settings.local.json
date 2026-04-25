@@ -58,7 +58,25 @@
       "Bash(/c/Users/jamin/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin/pdftotext -enc UTF-8 -f 250 -l 275 C:/jm_first_coding/claudecode_jm/contexts/references/케넨_블로그전자책_개정6판.pdf -)",
       "Bash(/c/Users/jamin/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin/pdftotext -enc UTF-8 -f 276 -l 291 C:/jm_first_coding/claudecode_jm/contexts/references/케넨_블로그전자책_개정6판.pdf -)",
       "Bash(/c/Users/jamin/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin/pdftotext -enc UTF-8 -f 457 -l 461 C:/jm_first_coding/claudecode_jm/contexts/references/케넨_블로그전자책_개정6판.pdf -)",
-      "Bash(/c/Users/jamin/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin/pdftotext -enc UTF-8 -f 462 -l 474 C:/jm_first_coding/claudecode_jm/contexts/references/케넨_블로그전자책_개정6판.pdf -)"
+      "Bash(/c/Users/jamin/AppData/Local/Microsoft/WinGet/Packages/oschwartz10612.Poppler_Microsoft.Winget.Source_8wekyb3d8bbwe/poppler-25.07.0/Library/bin/pdftotext -enc UTF-8 -f 462 -l 474 C:/jm_first_coding/claudecode_jm/contexts/references/케넨_블로그전자책_개정6판.pdf -)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:mtnb.dev)",
+      "Bash(npm root:*)",
+      "Bash(ls \"$\\(npm root -g\\)/@jjlabsio/\")",
+      "Bash(curl -s http://localhost:3000)",
+      "Bash(curl -s \"http://localhost:3000/api/apt-trade?lawd_cd=11680&deal_ymd=202503\")",
+      "Bash(curl -s \"http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev?serviceKey=pHwAwOqY5MgPmKutn6Tmyp%2FxKHQfzEzPDxc6hZIGGrInArN0o0Xe7aIgmM7zUcVmXai1BlKSZq1YJ%2FaKUJmQig%3D%3D&LAWD_CD=11680&DEAL_YMD=202503&pageNo=1&numOfRows=5\")",
+      "Bash(pkill -f \"node server.js\")",
+      "Bash(npx kill-port *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3000)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('trades:', len\\(d.get\\('trades',[]\\)\\), '/ total:', d.get\\('totalCount'\\)\\); [print\\(t['aptName'], t['dealAmount']\\) for t in d.get\\('trades',[]\\)[:5]]\")",
+      "Bash(python3 -c ' *)",
+      "WebFetch(domain:www.korea.kr)",
+      "WebFetch(domain:www.tossbank.com)",
+      "WebFetch(domain:lifefin.co.kr)",
+      "Bash(where claude *)"
     ]
   }
 }

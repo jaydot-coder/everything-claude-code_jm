@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>🏠 부동산 대출 분석기</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
+      background: #eef2f7;
+      color: #111827;
+      min-height: 100vh;
+      font-size: 14px;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
+      color: #fff;
+      padding: 14px 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 2px 12px rgba(0,0,0,.25);
+      position: sticky; top: 0; z-index: 100;
+    }
+    header h1 { font-size: 18px; font-weight: 800; letter-spacing: -.3px; }
+    header .sub { font-size: 11px; color: #93c5fd; margin-top: 2px; }
+    #updateBadge {
+      background: rgba(255,255,255,.12);
+      border: 1px solid rgba(255,255,255,.2);
+      border-radius: 8px;
+      padding: 5px 12px;
+      font-size: 11px;
+      color: #bfdbfe;
+    }
+
+    /* ── Layout ── */
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 420px;
+      gap: 18px;
+      padding: 20px 24px;
+      max-width: 1600px;
+      margin: 0 auto;
+      align-items: start;
+    }
+    @media (max-width: 1100px) {
+      .layout { grid-template-columns: 1fr; }
+      .right { position: static !important; max-height: none !important; }
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px 18px;
+      box-shadow: 0 1px 4px rgba(0,0,0,.07);
+      margin-bottom: 12px;
+    }
+    .card:last-child { margin-bottom: 0; }
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #0f172a;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* ── Form grids ── */
+    .ig  { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+    .ig3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px 10px; }
+    .ig .full, .ig3 .full { grid-column: 1 / -1; }
+
+    .fg { display: flex; flex-direction: column; gap: 4px; }
+    .fg label { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: .3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    input[type=number], input[type=text], input[type=month], select {
+      padding: 7px 10px;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 7px;
+      font-size: 12px;
+      color: #0f172a;
+      background: #f8fafc;
+      outline: none;
+      transition: border-color .18s, background .18s;
+      min-width: 0;
+      width: 100%;
+    }
+    input:focus, select:focus { border-color: #3b82f6; background: #fff; }
+
+    .sfx { position: relative; }
+    .sfx input { padding-right: 28px; }
+    .sfx .unit { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 10px; color: #9ca3af; pointer-events: none; }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 8px 16px; border: none; border-radius: 7px;
+      font-size: 12px; font-weight: 700; cursor: pointer;
+      transition: filter .15s, transform .1s;
+      white-space: nowrap;
+    }
+    .btn:active { transform: scale(.97); }
+    .btn-blue  { background: #2563eb; color: #fff; }
+    .btn-blue:hover  { filter: brightness(1.1); }
+    .btn-gray  { background: #f1f5f9; color: #374151; }
+    .btn-gray:hover  { background: #e2e8f0; }
+    .btn-green { background: #059669; color: #fff; font-size: 11px; padding: 5px 10px; border-radius: 5px; }
+    .btn-green:hover { filter: brightness(1.1); }
+
+    /* ── Stats row ── */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .stat-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px 10px;
+      text-align: center;
+    }
+    .stat-box .sl { font-size: 10px; color: #6b7280; font-weight: 600; margin-bottom: 2px; }
+    .stat-box .sv { font-size: 13px; font-weight: 800; color: #0f172a; }
+
+    /* ── Table ── */
+    .tbl-wrap { overflow: auto; max-height: 400px; border: 1px solid #e2e8f0; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    thead th {
+      background: #f8fafc; padding: 8px 10px; text-align: left;
+      font-weight: 700; color: #6b7280; border-bottom: 1px solid #e2e8f0;
+      position: sticky; top: 0; white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid #f1f5f9; transition: background .12s; }
+    tbody tr:hover { background: #eff6ff; }
+    tbody td { padding: 8px 10px; }
+    .t-apt { font-weight: 700; color: #1e40af; }
+    .t-price { font-weight: 800; color: #0f172a; white-space: nowrap; }
+    .t-area { color: #374151; }
+    .t-muted { color: #9ca3af; font-size: 10px; }
+
+    /* ── Right panel sticky ── */
+    @media (min-width: 1101px) {
+      .right {
+        position: sticky;
+        top: 64px;
+        max-height: calc(100vh - 80px);
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: #cbd5e1 transparent;
+      }
+      .right::-webkit-scrollbar { width: 4px; }
+      .right::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 2px; }
+    }
+
+    /* ── Selected banner ── */
+    .sel-banner {
+      display: flex; align-items: center; justify-content: space-between;
+      background: #eff6ff; border: 1.5px solid #3b82f6;
+      border-radius: 8px; padding: 8px 12px; margin-bottom: 10px;
+    }
+    .sel-banner .sel-lbl { font-size: 10px; font-weight: 700; color: #3b82f6; margin-bottom: 1px; }
+    .sel-banner .sel-val { font-size: 14px; font-weight: 800; color: #1e40af; }
+
+    /* ── Analysis result table ── */
+    .at-group { margin-bottom: 12px; }
+    .at-header {
+      font-size: 10px; font-weight: 800; color: #6b7280;
+      text-transform: uppercase; letter-spacing: .5px;
+      padding: 3px 0 5px;
+      border-bottom: 1.5px solid #e2e8f0;
+      margin-bottom: 6px;
+    }
+    .at-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 5px 4px;
+      border-bottom: 1px solid #f8fafc;
+    }
+    .at-row:last-child { border-bottom: none; }
+    .at-label { font-size: 12px; color: #374151; flex: 1; }
+    .at-hint { font-size: 10px; color: #9ca3af; margin-left: 3px; }
+    .at-value { font-size: 13px; font-weight: 800; color: #0f172a; text-align: right; white-space: nowrap; margin-left: 8px; }
+
+    .at-key {
+      background: #f8fafc;
+      border-radius: 7px;
+      padding: 7px 10px;
+      margin: 4px 0;
+      border-bottom: none !important;
+    }
+    .at-key .at-label { font-weight: 700; }
+    .at-key .at-value { font-size: 15px; }
+
+    .at-ok   .at-value { color: #059669; }
+    .at-fail .at-value { color: #dc2626; }
+    .at-warn .at-value { color: #d97706; }
+
+    .dsr-bar-wrap { margin-top: 3px; }
+    .dsr-bar-track { height: 5px; background: #e5e7eb; border-radius: 3px; overflow: hidden; margin-top: 3px; }
+    .dsr-bar-fill  { height: 100%; border-radius: 3px; transition: width .5s ease; }
+    .dsr-ok   { background: linear-gradient(90deg, #059669, #34d399); }
+    .dsr-warn { background: linear-gradient(90deg, #d97706, #fbbf24); }
+    .dsr-fail { background: linear-gradient(90deg, #dc2626, #f87171); }
+
+    /* ── Spinner ── */
+    .loading { display: flex; align-items: center; justify-content: center; padding: 40px; color: #6b7280; gap: 10px; }
+    .spin { width: 18px; height: 18px; border: 3px solid #e5e7eb; border-top-color: #3b82f6; border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty { text-align: center; padding: 36px 20px; color: #9ca3af; font-size: 12px; line-height: 1.8; }
+    .error { text-align: center; padding: 28px; color: #dc2626; font-size: 12px; }
+    .disclaimer { font-size: 10px; color: #9ca3af; line-height: 1.7; margin-top: 10px; padding-top: 10px; border-top: 1px solid #f1f5f9; }
+
+    .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; align-items: flex-end; }
+
+    /* ── Checkbox 오버라이드 ── */
+    input[type=checkbox] {
+      width: auto; min-width: unset; padding: 0;
+      border: none; background: none;
+      accent-color: #2563eb;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🏠 부동산 대출 분석기</h1>
+    <div class="sub">국토교통부 실거래가 기반 · LTV / DSR / 스트레스 DSR 자동 계산</div>
+  </div>
+  <div id="updateBadge">데이터 미조회</div>
+</header>
+
+<div class="layout">
+
+  <!-- ══ LEFT: 실거래가 조회 ══ -->
+  <div class="left">
+    <div class="card">
+      <div class="card-title">📊 아파트 실거래가 조회</div>
+
+      <div class="row">
+        <div class="fg">
+          <label>시/도</label>
+          <select id="sidoSel" onchange="onSidoChange()" style="width:110px"></select>
+        </div>
+        <div class="fg">
+          <label>구/군</label>
+          <select id="gugunSel" style="width:150px" onchange="onGugunChange()"></select>
+        </div>
+        <div class="fg">
+          <label style="display:flex;align-items:center;gap:8px;">
+            거래 월
+            <label style="font-weight:400;text-transform:none;letter-spacing:0;color:#6b7280;font-size:10px;cursor:pointer;display:flex;align-items:center;gap:3px;">
+              <input type="checkbox" id="rangeMode" onchange="toggleRangeMode()" style="width:auto;min-width:unset;padding:0;border:none;background:none;accent-color:#2563eb;" />
+              기간 조회
+            </label>
+          </label>
+          <div id="singleMonthWrap">
+            <input type="month" id="dealMonth" style="width:140px" />
+          </div>
+          <div id="rangeMonthWrap" style="display:none;align-items:center;gap:4px;">
+            <input type="month" id="startMonth" style="width:120px" />
+            <span style="color:#9ca3af;font-size:12px;padding:0 1px;">~</span>
+            <input type="month" id="endMonth" style="width:120px" />
+          </div>
+        </div>
+        <div class="fg">
+          <label>아파트명 검색</label>
+          <input type="text" id="aptFilter" placeholder="예: 래미안, 자이…" oninput="applyFilter()" style="width:160px" />
+        </div>
+        <button class="btn btn-blue" onclick="doSearch()">🔍 조회</button>
+      </div>
+
+      <div id="statsRow"></div>
+      <div id="areaChipsRow"></div>
+      <div id="tableArea"><div class="empty">지역과 거래 월 선택 후 <strong>조회</strong> 버튼을 눌러주세요.</div></div>
+
+      <div style="margin-top:8px; font-size:10px; color:#9ca3af;">
+        ※ 국토교통부 아파트매매 실거래가 상세 자료 (계약일 기준)
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ RIGHT: 계산기 ══ -->
+  <div class="right">
+
+    <!-- 내 재무 현황 -->
+    <div class="card">
+      <div class="card-title">💰 내 재무 현황</div>
+      <div class="ig3">
+        <div class="fg">
+          <label>연봉</label>
+          <div class="sfx"><input type="number" id="annualIncome" placeholder="16370" oninput="calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg">
+          <label>유동자산 (현금+주식+코인)</label>
+          <div class="sfx"><input type="number" id="liquidAssets" placeholder="29734" oninput="calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg">
+          <label>신용대출 잔액</label>
+          <div class="sfx"><input type="number" id="creditLoan" placeholder="8020" oninput="updateCreditDisplay(); calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg">
+          <label>현 아파트 예상 매도가</label>
+          <div class="sfx"><input type="number" id="currentAptPrice" placeholder="77000" oninput="calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg">
+          <label>현 주담대 잔액</label>
+          <div class="sfx"><input type="number" id="currentMortgage" placeholder="35630" oninput="calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg">
+          <label>신용대출 이율</label>
+          <div class="sfx"><input type="number" id="creditRate" placeholder="5.5" step="0.1" min="0" max="30" oninput="updateCreditDisplay(); calcAll()" /><span class="unit">%</span></div>
+          <div id="creditInterestDisplay" style="font-size:10px;color:#6b7280;margin-top:3px;min-height:14px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 목표 아파트 & 대출 조건 -->
+    <div class="card">
+      <div class="card-title">🎯 목표 아파트 &amp; 대출 조건</div>
+
+      <div id="selBanner" style="display:none">
+        <div class="sel-banner">
+          <div>
+            <div class="sel-lbl">실거래가 선택됨</div>
+            <div class="sel-val" id="selBannerTxt">—</div>
+          </div>
+          <button class="btn btn-gray" onclick="clearSel()" style="font-size:11px;padding:5px 10px;">✕ 해제</button>
+        </div>
+      </div>
+
+      <div class="ig">
+        <div class="fg full">
+          <label>아파트명</label>
+          <input type="text" id="aptNameInput" placeholder="예: 반도 유보라 7차" oninput="calcAll()" />
+        </div>
+        <div class="fg">
+          <label>호가</label>
+          <div class="sfx"><input type="number" id="targetPrice" placeholder="125000" oninput="calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg">
+          <label>KB시세</label>
+          <div class="sfx"><input type="number" id="kbPrice" placeholder="115000" oninput="calcAll()" /><span class="unit">만원</span></div>
+        </div>
+        <div class="fg full">
+          <label>LTV %  <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#9ca3af;">— 지역·보유수 기준 자동입력, 직접 수정 가능</span></label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <div class="sfx" style="flex:1;max-width:120px;"><input type="number" id="ltvPct" value="70" min="0" max="100" step="5" oninput="calcAll()" /><span class="unit">%</span></div>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-size:12px;color:#374151;white-space:nowrap;font-weight:600;">
+              <input type="checkbox" id="firstBuyer" onchange="onFirstBuyerChange()" style="width:auto;min-width:unset;padding:0;border:none;background:none;accent-color:#2563eb;" />
+              생애최초 특례
+            </label>
+          </div>
+          <div id="ltvPolicyArea" style="margin-top:5px;min-height:18px;"></div>
+        </div>
+        <div class="fg">
+          <label>예상 금리</label>
+          <div class="sfx"><input type="number" id="intRate" value="4.5" step="0.1" min="1" max="20" oninput="calcAll()" /><span class="unit">%</span></div>
+        </div>
+        <div class="fg">
+          <label>대출 만기</label>
+          <select id="loanTerm" onchange="calcAll()">
+            <option value="10">10년</option>
+            <option value="20">20년</option>
+            <option value="30" selected>30년</option>
+            <option value="40">40년</option>
+          </select>
+        </div>
+        <div class="fg">
+          <label>주택 보유 수</label>
+          <select id="houseCount" onchange="onHouseCountChange()">
+            <option value="0">무주택</option>
+            <option value="1">1주택</option>
+            <option value="2">2주택 이상</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 분석 결과 -->
+    <div class="card">
+      <div class="card-title">📊 투자 분석 결과</div>
+      <div id="resultArea"><div class="empty">호가를 입력하면 자동으로 계산됩니다.</div></div>
+    </div>
+
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
