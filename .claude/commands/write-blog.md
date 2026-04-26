@@ -52,28 +52,14 @@ description: 네이버 블로그 글 작성. 주제/키워드 또는 초안을 �
 ```
 /write-blog "주제"
     ↓
-contexts/my-blog-style.md 로드 (말투 규칙 + AI금지 패턴) ← 규칙 우선
+contexts/my-blog-style.md에서 말투 샘플 로드
     ↓
-contexts/my-blog-samples.md 로드 (말투 샘플 — 어투/리듬만 참고, 규칙과 충돌 시 규칙 우선)
+blog-style-mimic 스킬로 말투 분석
     ↓
-contexts/blog-strategy.md 로드 (케넨 전략: 키워드/제목/본문)
-    ↓
-rules/common/naver-blog.md 참조 (포맷 규칙)
-    ↓
-글 작성 전 체크리스트 적용 (키워드→스마트블록→소주제 구성)
+naver-blog 규칙 적용하여 글 생성
     ↓
 초안 제시 → 수정 요청 대기 → 최종본 확정
-    ↓
-output/파일명.md 저장 (네이버 블로그 변환용 마크다운)
 ```
-
-## 네이버 블로그 붙여넣기 방법
-
-1. 터미널에서 실행: `node scripts/preview-blog.mjs output/파일명.md`
-2. 브라우저가 자동으로 열림
-3. **[서식 복사]** 버튼 클릭
-4. 네이버 블로그 에디터에서 **Ctrl+V** 붙여넣기
-5. `[이미지: ...]` 자리표시자 위치에 이미지 직접 삽입
 
 ## Related
 

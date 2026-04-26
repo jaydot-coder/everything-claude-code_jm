@@ -274,11 +274,18 @@
           <input type="text" id="aptFilter" placeholder="예: 래미안, 자이…" oninput="applyFilter()" style="width:160px" />
         </div>
         <button class="btn btn-blue" onclick="doSearch()">🔍 조회</button>
+        <button class="btn btn-gray" id="rentBtn" onclick="loadRentData()" style="font-size:11px;">📋 전세가율</button>
       </div>
 
       <div id="statsRow"></div>
+      <div id="dongChipsRow"></div>
       <div id="areaChipsRow"></div>
+      <div id="chartArea" style="display:none;background:#fff;border-radius:10px;padding:12px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:10px;">
+        <div style="font-size:10px;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;">📈 월별 평균 거래가 추이</div>
+        <div style="position:relative;height:160px;"><canvas id="trendCanvas"></canvas></div>
+      </div>
       <div id="tableArea"><div class="empty">지역과 거래 월 선택 후 <strong>조회</strong> 버튼을 눌러주세요.</div></div>
+      <div id="rentArea"></div>
 
       <div style="margin-top:8px; font-size:10px; color:#9ca3af;">
         ※ 국토교통부 아파트매매 실거래가 상세 자료 (계약일 기준)
@@ -392,6 +399,7 @@
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
