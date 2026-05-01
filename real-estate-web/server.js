@@ -88,20 +88,27 @@ app.get('/api/apt-trade', async (req, res) => {
     return res.status(400).json({ error: '지역코드와 거래월을 입력해주세요.' });
   }
 
+  const cacheKey = `${lawd_cd}|${deal_ymd}`;
+  if (_tradeCache.has(cacheKey)) {
+    return res.json({ ..._tradeCache.get(cacheKey), cached: true });
+  }
+
   try {
     const first = await fetchAptPage(lawd_cd, deal_ymd, 1);
     let allItems = [...first.items];
 
     if (first.totalCount > PAGE_SIZE) {
       const extraPages = Math.min(Math.ceil((first.totalCount - PAGE_SIZE) / PAGE_SIZE), 9);
-      for (let p = 2; p <= extraPages + 1; p++) {
-        const page = await fetchAptPage(lawd_cd, deal_ymd, p);
-        allItems = allItems.concat(page.items);
-      }
+      // 나머지 페이지 병렬 요청
+      const pageNums = Array.from({ length: extraPages }, (_, i) => i + 2);
+      const pages = await Promise.all(pageNums.map(p => fetchAptPage(lawd_cd, deal_ymd, p)));
+      pages.forEach(p => { allItems = allItems.concat(p.items); });
     }
 
     const trades = mapTrades(allItems);
-    res.json({ totalCount: first.totalCount, fetched: trades.length, trades });
+    const payload = { totalCount: first.totalCount, fetched: trades.length, trades };
+    _tradeCache.set(cacheKey, payload);
+    res.json(payload);
 
   } catch (err) {
     console.error('[API Error]', err.message);
@@ -124,6 +131,10 @@ app.get('/api/apt-trade', async (req, res) => {
     res.status(500).json({ error: `서버 오류: ${err.message}` });
   }
 });
+
+// ── 매매/전세 응답 메모리 캐시 ────────────────────────────────────────────────
+const _tradeCache = new Map(); // 'lawdCd|dealYmd' → response payload
+const _rentCache  = new Map();
 
 // ── 아파트 전월세 (순전세) ────────────────────────────────────────────────────
 const RENT_API_BASE = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent';
@@ -170,18 +181,25 @@ function mapRents(items) {
 app.get('/api/apt-rent', async (req, res) => {
   const { lawd_cd, deal_ymd } = req.query;
   if (!lawd_cd || !deal_ymd) return res.status(400).json({ error: '파라미터 없음' });
+
+  const cacheKey = `${lawd_cd}|${deal_ymd}`;
+  if (_rentCache.has(cacheKey)) {
+    return res.json({ ..._rentCache.get(cacheKey), cached: true });
+  }
+
   try {
     const first = await fetchRentPage(lawd_cd, deal_ymd, 1);
     let allItems = [...first.items];
     if (first.totalCount > PAGE_SIZE) {
       const extra = Math.min(Math.ceil((first.totalCount - PAGE_SIZE) / PAGE_SIZE), 9);
-      for (let p = 2; p <= extra + 1; p++) {
-        const page = await fetchRentPage(lawd_cd, deal_ymd, p);
-        allItems = allItems.concat(page.items);
-      }
+      const pageNums = Array.from({ length: extra }, (_, i) => i + 2);
+      const pages = await Promise.all(pageNums.map(p => fetchRentPage(lawd_cd, deal_ymd, p)));
+      pages.forEach(p => { allItems = allItems.concat(p.items); });
     }
     const rents = mapRents(allItems);
-    res.json({ totalCount: first.totalCount, fetched: rents.length, rents });
+    const payload = { totalCount: first.totalCount, fetched: rents.length, rents };
+    _rentCache.set(cacheKey, payload);
+    res.json(payload);
   } catch (err) {
     console.error('[Rent API Error]', err.message);
     if (err.isApiError) return res.status(502).json({ error: err.message });

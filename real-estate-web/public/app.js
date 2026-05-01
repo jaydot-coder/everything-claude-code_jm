@@ -213,16 +213,61 @@ function applyLtvPolicy() {
   return policy;
 }
 
-// 신용대출 이율 → 월이자 자동 계산 및 표시
+// 신용대출 상환방식에 따른 월부담 자동 계산 및 표시
 function updateCreditDisplay() {
-  const loan = +document.getElementById('creditLoan').value || 0;
-  const rate = +document.getElementById('creditRate').value || 0;
-  const monthly = (loan > 0 && rate > 0) ? loan * rate / 100 / 12 : 0;
+  const loan    = +document.getElementById('creditLoan').value  || 0;
+  const rate    = +document.getElementById('creditRate').value  || 0;
+  const type    = document.getElementById('creditRepayType')?.value || 'interest';
+  const termMo  = +document.getElementById('creditTerm')?.value || 60;
   const el = document.getElementById('creditInterestDisplay');
   if (!el) return;
-  el.textContent = monthly > 0
-    ? `월이자 ≈ ${monthly.toFixed(1)}만원`
-    : '이율 입력 시 자동 계산';
+  if (!(loan > 0 && rate > 0)) { el.textContent = '이율 입력 시 자동 계산'; return; }
+
+  // 실제 납부액
+  const actualMonthly = type === 'amortize'
+    ? monthlyPayment(loan, rate, termMo / 12)
+    : loan * rate / 100 / 12;
+  // DSR 산정액 (항상 원금균등, 최소 5년)
+  const dsrTerm    = Math.max(termMo, 60);
+  const dsrMonthly = monthlyPayment(loan, rate, dsrTerm / 12);
+
+  const actualLabel = type === 'amortize' ? '실납부' : '실납부(이자만)';
+  const dsrLabel    = dsrTerm !== termMo ? `DSR:${dsrTerm}개월균등` : 'DSR:원금균등';
+  el.innerHTML = `<span>${actualLabel} ≈ ${actualMonthly.toFixed(1)}만원</span>`
+    + (dsrMonthly !== actualMonthly
+        ? ` <span style="color:#7c3aed;"> | ${dsrLabel} ≈ ${dsrMonthly.toFixed(1)}만원</span>`
+        : '');
+}
+
+// 마이너스통장 월이자 자동 표시
+function updateMinusDisplay() {
+  const limit   = +document.getElementById('minusLimit')?.value || 0;
+  const rate    = +document.getElementById('minusRate')?.value  || 0;
+  const monthly = (limit > 0 && rate > 0) ? limit * rate / 100 / 12 : 0;
+  const el = document.getElementById('minusInterestDisplay');
+  if (!el) return;
+  el.textContent = monthly > 0 ? `월이자 ≈ ${monthly.toFixed(1)}만원` : '이율 입력 시 자동 계산';
+}
+
+// 신용대출 분할상환 선택 시 잔여만기 필드 표시
+function onCreditTypeChange() {
+  const type = document.getElementById('creditRepayType')?.value;
+  const wrap = document.getElementById('creditTermWrap');
+  if (wrap) wrap.style.display = type === 'amortize' ? '' : 'none';
+  updateCreditDisplay();
+}
+
+// ── 토큰 검색 헬퍼 ────────────────────────────────────────────────────────────
+function tokenMatchScore(aptName, query) {
+  const name = aptName.toLowerCase();
+  const tokens = query.toLowerCase().split(/\s+/).filter(t => t.length > 0);
+  if (!tokens.length) return 1;
+  const matched = tokens.filter(t => name.includes(t)).length;
+  return matched / tokens.length;
+}
+
+function nameMatches(aptName, query) {
+  return tokenMatchScore(aptName, query) > 0;
 }
 
 // ── 상태 ──────────────────────────────────────────────────────────────────────
@@ -246,6 +291,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setDefaultMonth();
   applyLtvPolicy();
   updateCreditDisplay();
+  updateMinusDisplay();
   calcAll();
 });
 
@@ -335,22 +381,29 @@ async function doSearch() {
     let merged = [];
     let mergedRents = [];
 
-    for (let i = 0; i < months.length; i++) {
-      const m = months[i];
+    // 월별 API를 4개씩 병렬 요청 (공공API 부하 고려)
+    const CONCURRENT = 4;
+    for (let i = 0; i < months.length; i += CONCURRENT) {
+      const batch = months.slice(i, i + CONCURRENT);
       if (months.length > 1) {
         document.getElementById('tableArea').innerHTML =
-          `<div class="loading"><div class="spin"></div>${i + 1} / ${months.length}개월 조회 중… (${m})</div>`;
+          `<div class="loading"><div class="spin"></div>${Math.min(i + CONCURRENT, months.length)} / ${months.length}개월 조회 중…</div>`;
       }
-      const dealYmd = m.replace('-', '');
-      const [tradeRes, rentJson] = await Promise.all([
-        fetch(`/api/apt-trade?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`),
-        fetch(`/api/apt-rent?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`)
-          .then(r => r.ok ? r.json() : null).catch(() => null),
-      ]);
-      const tradeData = await tradeRes.json();
-      if (!tradeRes.ok) throw new Error(tradeData.error || '조회 실패');
-      merged = merged.concat(tradeData.trades || []);
-      if (rentJson?.rents) mergedRents = mergedRents.concat(rentJson.rents);
+      const results = await Promise.all(batch.map(async m => {
+        const dealYmd = m.replace('-', '');
+        const [tradeRes, rentJson] = await Promise.all([
+          fetch(`/api/apt-trade?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`),
+          fetch(`/api/apt-rent?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`)
+            .then(r => r.ok ? r.json() : null).catch(() => null),
+        ]);
+        const tradeData = await tradeRes.json();
+        if (!tradeRes.ok) throw new Error(tradeData.error || '조회 실패');
+        return { trades: tradeData.trades || [], rents: rentJson?.rents || [] };
+      }));
+      results.forEach(r => {
+        merged = merged.concat(r.trades);
+        mergedRents = mergedRents.concat(r.rents);
+      });
     }
 
     allTrades    = merged;
@@ -377,9 +430,11 @@ async function doSearch() {
 function applyFilter() {
   const q = document.getElementById('aptFilter').value.trim().toLowerCase();
 
-  // 1) 아파트명 필터
+  // 1) 아파트명 필터 (토큰 기반: 순서 무관, 부분 매칭)
   const nameFiltered = q
-    ? allTrades.filter(t => t.aptName.toLowerCase().includes(q))
+    ? allTrades
+        .filter(t => nameMatches(t.aptName, q))
+        .sort((a, b) => tokenMatchScore(b.aptName, q) - tokenMatchScore(a.aptName, q))
     : [...allTrades];
 
   // 2) 동 칩 렌더 (동 필터 전 기준)
@@ -435,7 +490,7 @@ function applyFilter() {
     if (abort.cancelled) return;
     // 칩·테이블 한 번에 렌더링
     const q  = document.getElementById('aptFilter').value.trim().toLowerCase();
-    const nf = q ? allTrades.filter(t => t.aptName.toLowerCase().includes(q)) : [...allTrades];
+    const nf = q ? allTrades.filter(t => nameMatches(t.aptName, q)) : [...allTrades];
     const df = selectedDong ? nf.filter(t => t.dong === selectedDong) : [...nf];
     renderAreaChips(df);
     renderTable();
@@ -891,6 +946,31 @@ function clearSel() {
 
 // ── 대출 계산 ─────────────────────────────────────────────────────────────────
 
+// DSR 40% 기준 역산: 해당 조건에서 가능한 최대 대출 원금 (만원)
+function maxLoanFromDSR(income, creditInterest, rate, term) {
+  if (income <= 0 || rate <= 0 || term <= 0) return null;
+  const maxMonthly = income * 0.40 / 12 - creditInterest;
+  if (maxMonthly <= 0) return 0;
+  const r = rate / 100 / 12;
+  const n = term * 12;
+  return Math.floor(maxMonthly * (1 - Math.pow(1 + r, -n)) / r);
+}
+
+// 지역별 방공제(소액임차인 최우선변제금) 금액 (만원)
+function getBangGongje(regionType) {
+  if (regionType === 'seoul') return 5500;
+  if (regionType === 'metro-strong' || regionType === 'metro') return 4800;
+  return 2800;
+}
+
+// 등기비용 추정: 법무사 보수 + 인지세 + 국민주택채권 할인 손실 (만원)
+function calcRegistrationFee(price) {
+  const lawyerFee    = price < 50000 ? 50 : price < 100000 ? 70 : 100;
+  const stampTax     = price >= 100000 ? 35 : 15;
+  const bondDiscount = Math.round(price * 0.0003);
+  return lawyerFee + stampTax + bondDiscount;
+}
+
 function monthlyPayment(principal, annualRate, termYears) {
   if (principal <= 0 || annualRate <= 0) return 0;
   const r = annualRate / 100 / 12;
@@ -906,7 +986,27 @@ function calcAll() {
   const currentAptPrice = +document.getElementById('currentAptPrice').value || 0;
   const currentMortgage = +document.getElementById('currentMortgage').value || 0;
   const creditRate      = +document.getElementById('creditRate').value      || 0;
-  const creditInterest  = creditLoan * creditRate / 100 / 12; // 만원/월 (자동 계산)
+
+  // 신용대출 상환방식 (실제 납부액 표시용)
+  const creditRepayType = document.getElementById('creditRepayType')?.value || 'interest';
+  const creditTermMo    = +document.getElementById('creditTerm')?.value || 60;
+  // DSR 산정: 실제 상환방식 무관, 원금균등분할상환 가정 (금감원 기준)
+  // 단기 대출도 최소 60개월(5년) 기준 적용 → 우회 방지
+  const creditDsrTerm   = Math.max(creditTermMo, 60);
+  const creditMonthly   = (creditLoan > 0 && creditRate > 0)
+    ? monthlyPayment(creditLoan, creditRate, creditDsrTerm / 12)
+    : 0;
+  // DTI용 이자만 (원금 제외)
+  const creditInterestOnly = creditLoan * creditRate / 100 / 12;
+  // 마이너스통장 (한도 × 이율 / 12, 이자만 DSR/DTI 반영)
+  const minusLimit   = +document.getElementById('minusLimit')?.value   || 0;
+  const minusRate    = +document.getElementById('minusRate')?.value    || 0;
+  const minusMonthly = minusLimit * minusRate / 100 / 12;
+  // 기타 대출 월상환액 (자동차·학자금 등)
+  const otherMonthly = +document.getElementById('otherLoanMonthly')?.value || 0;
+  // 기존 대출 합계: DSR용(원리금) / DTI용(이자만)
+  const existingMonthly  = creditMonthly + minusMonthly + otherMonthly;
+  const existingInterest = creditInterestOnly + minusMonthly; // 기타는 이자 분리 불가 → DTI 보수적
 
   // ── 목표 아파트 입력값 ──
   const target    = +document.getElementById('targetPrice').value  || 0;
@@ -948,34 +1048,61 @@ function calcAll() {
     }
   }
 
+  // 방공제 차감 옵션 (MCI 미가입 시 체크)
+  const bangGongjeApply = document.getElementById('bangGongjeCheck')?.checked ?? true;
+  const bangGongjeAmt   = bangGongjeApply ? getBangGongje(regionType) : 0;
+  const loanAfterBG     = Math.max(0, ltvLoan - bangGongjeAmt);
+
+  // DSR 40% 역산 최대 대출 (기존 대출 합계 전체 차감)
+  const dsrMaxLoan = income > 0 && rate > 0 ? maxLoanFromDSR(income, existingMonthly, rate, term) : null;
+
+  // 실제 적용 대출 = min(방공제 후 LTV 한도, DSR 40% 역산)
+  let effectiveLoan = loanAfterBG;
+  let dsrCapApplied = false;
+  if (dsrMaxLoan !== null && dsrMaxLoan < loanAfterBG) {
+    effectiveLoan = Math.max(0, dsrMaxLoan);
+    dsrCapApplied = true;
+  }
+
+  // 방공제 힌트 텍스트 업데이트
+  const bgHint = document.getElementById('bangGongjeHint');
+  if (bgHint) bgHint.textContent = `(${fmtWan(getBangGongje(regionType))})`;
+
   // 대출 + 현금 합계
-  const totalFunds = remainCash + ltvLoan;
+  const totalFunds = remainCash + effectiveLoan;
 
   // ── 취득 비용 계산 ──
   const excluArea = selectedTradeArea || 85; // 면적 미선택 시 85㎡ 기본
   const taxInfo   = calcAcquisitionTax(target, lawdCd, houseCount, excluArea, isFirstBuyer);
   const buyFee    = calcAgencyFee(target);
   const sellFee   = currentAptPrice > 0 ? calcAgencyFee(currentAptPrice) : { fee: 0, rate: '0' };
-  const totalAcqCost = taxInfo.total + buyFee.fee + sellFee.fee;
+  const regFee    = calcRegistrationFee(target);
+  const totalAcqCost = taxInfo.total + buyFee.fee + sellFee.fee + regFee;
 
   // 실제 필요 자금 = 호가 + 취득비용
   const requiredFunds = target + totalAcqCost;
   const surplus = totalFunds - requiredFunds;
   const canBuy  = surplus >= 0;
 
-  // 원리금 균등상환 월상환액 (일반 금리)
-  const mp = monthlyPayment(ltvLoan, rate, term);
+  // 원리금 균등상환 월상환액 (실제 적용 대출 기준)
+  const mp = monthlyPayment(effectiveLoan, rate, term);
 
-  // DSR = (월상환액 + 신용대출 월이자) × 12 / 연봉
-  const dsr = income > 0 ? (mp + creditInterest) * 12 / income * 100 : 0;
+  // DSR = (신규주담대 원리금 + 기존 대출 합계) × 12 / 연봉
+  const dsr = income > 0 ? (mp + existingMonthly) * 12 / income * 100 : 0;
+  // DTI = (신규주담대 원리금 + 기존 대출 이자합계) × 12 / 연봉  (정책대출 심사 기준)
+  const dti = income > 0 ? (mp + existingInterest) * 12 / income * 100 : 0;
 
-  // 스트레스 금리: 수도권(서울·경기·인천) +3%, 비수도권 +1.5% (2025.10.15 강화)
-  const stressAdd = (regionType !== 'other') ? 3.0 : 1.5;
-  const mpStress  = monthlyPayment(ltvLoan, rate + stressAdd, term);
-  const dsrStress = income > 0 ? (mpStress + creditInterest) * 12 / income * 100 : 0;
+  // 스트레스 DSR: 10.15 대책(2025.10.16~) 수도권 기준금리 하한 3%로 상향
+  // 비수도권: 0.75% 유예(25년말), 금리유형별: 변동100%/혼합형80%/주기형40%/순수고정0%
+  const baseStress   = (regionType !== 'other') ? 3.0 : 0.75;
+  const rateType     = document.getElementById('rateType')?.value || 'hybrid';
+  const stressFactor = rateType === 'variable' ? 1.0 : rateType === 'hybrid' ? 0.8 : rateType === 'periodic' ? 0.4 : 0.0;
+  const stressAdd    = +(baseStress * stressFactor).toFixed(2);
+  const mpStress  = monthlyPayment(effectiveLoan, rate + stressAdd, term);
+  const dsrStress = income > 0 ? (mpStress + existingMonthly) * 12 / income * 100 : 0;
 
   // 연간 순이자 = (총상환액 - 대출원금) / 만기
-  const totalInterest  = mp * term * 12 - ltvLoan;
+  const totalInterest  = mp * term * 12 - effectiveLoan;
   const annualInterest = term > 0 ? totalInterest / term : 0;
 
   // ── 결과 렌더링 ──
@@ -1005,6 +1132,21 @@ function calcAll() {
         </span>
         <span class="at-value">${fmtWan(ltvLoan)}</span>
       </div>
+      ${bangGongjeApply && ltvLoan > 0 ? `
+      <div class="at-row">
+        <span class="at-label">방공제 차감 <span class="at-hint">(소액임차인 최우선변제 · ${regionType === 'seoul' ? '서울' : (regionType === 'metro-strong' || regionType === 'metro') ? '경기·인천' : '기타'})</span></span>
+        <span class="at-value" style="color:#7c3aed;">−${fmtWan(bangGongjeAmt)}</span>
+      </div>` : ''}
+      ${dsrMaxLoan !== null && ltvLoan > 0 ? `
+      <div class="at-row ${dsrCapApplied ? 'at-warn' : ''}">
+        <span class="at-label">DSR 40% 역산 최대 대출 <span class="at-hint">((연봉×40%÷12−기존대출) 역산)</span>${dsrCapApplied ? ' <span style="color:#c2410c;font-size:10px;font-weight:800;">← 실제 적용</span>' : ' <span style="font-size:10px;color:#9ca3af;">여유 있음</span>'}</span>
+        <span class="at-value" style="${dsrCapApplied ? 'color:#c2410c;' : 'color:#9ca3af;'}">${fmtWan(Math.round(dsrMaxLoan))}</span>
+      </div>` : ''}
+      ${ltvLoan > 0 && (bangGongjeApply || dsrCapApplied) ? `
+      <div class="at-row at-key" style="background:#f5f3ff;border:1px solid #ede9fe;">
+        <span class="at-label" style="font-weight:700;color:#6d28d9;">실제 적용 대출</span>
+        <span class="at-value" style="font-size:15px;color:#6d28d9;">${fmtWan(effectiveLoan)}</span>
+      </div>` : ''}
       <div class="at-row at-key">
         <span class="at-label">대출 + 현금 합계</span>
         <span class="at-value">${fmtWan(totalFunds)}</span>
@@ -1036,8 +1178,12 @@ function calcAll() {
         <span class="at-label">매도 중개보수 <span class="at-hint">(${sellFee.rate}% · 현아파트 ${fmtWan(currentAptPrice)} 기준)</span></span>
         <span class="at-value">${fmtWan(sellFee.fee)}</span>
       </div>` : ''}
+      <div class="at-row">
+        <span class="at-label">등기비용 <span class="at-hint">(법무사·인지세·채권할인, 추정)</span></span>
+        <span class="at-value">≈${fmtWan(regFee)}</span>
+      </div>
       <div class="at-row at-key">
-        <span class="at-label">취득 비용 합계 <span class="at-hint">(세금+중개비)</span></span>
+        <span class="at-label">취득 비용 합계 <span class="at-hint">(세금+등기+중개비)</span></span>
         <span class="at-value">${fmtWan(totalAcqCost)}</span>
       </div>
       <div class="at-row at-key ${canBuy ? 'at-ok' : 'at-fail'}">
@@ -1050,23 +1196,49 @@ function calcAll() {
     <div class="at-group">
       <div class="at-header">상환 부담</div>
       <div class="at-row">
-        <span class="at-label">원리금 균등 월상환액 <span class="at-hint">(금리 ${rate}%)</span></span>
-        <span class="at-value">${ltvLoan > 0 ? fmtWan(Math.round(mp)) + '/월' : '—'}</span>
+        <span class="at-label">신규 주담대 월상환액 <span class="at-hint">(금리 ${rate}% · ${fmtWan(effectiveLoan)})</span></span>
+        <span class="at-value">${effectiveLoan > 0 ? fmtWan(Math.round(mp)) + '/월' : '—'}</span>
       </div>
       <div class="at-row ${dsrClass(dsr)}">
         <div style="flex:1">
-          <span class="at-label">DSR <span class="at-hint">((월상환+신용이자)×12/연봉)</span></span>
+          <span class="at-label">DSR <span class="at-hint">(총부채원리금상환비율 · 은행 심사)</span></span>
+          <div class="dsr-breakdown">
+            ${effectiveLoan > 0 ? `<div class="dsr-item"><span>└ 주담대 (금리${rate}%·${term}년 원리금균등)</span><span class="dsr-val">${mp.toFixed(1)}만원/월</span></div>` : ''}
+            ${creditMonthly > 0 ? `<div class="dsr-item"><span>└ 신용대출 (원금균등 ${creditDsrTerm}개월 DSR 기준)</span><span class="dsr-val">${creditMonthly.toFixed(1)}만원/월</span></div>` : ''}
+            ${minusMonthly > 0 ? `<div class="dsr-item"><span>└ 마이너스통장 (이자만)</span><span class="dsr-val">${minusMonthly.toFixed(1)}만원/월</span></div>` : ''}
+            ${otherMonthly > 0 ? `<div class="dsr-item"><span>└ 기타 대출</span><span class="dsr-val">${otherMonthly.toFixed(1)}만원/월</span></div>` : ''}
+            ${income > 0 ? `<div class="dsr-formula">= 월합계 ${(mp + existingMonthly).toFixed(1)}만원 × 12 ÷ 연봉 ${income}만원 = ${dsr.toFixed(1)}%</div>` : ''}
+          </div>
           ${income > 0 ? dsrBar(dsr) : ''}
         </div>
         <span class="at-value">${income > 0 ? dsr.toFixed(1) + '%' : '—'}</span>
       </div>
+      <div class="at-row ${dsrClass(dti)}">
+        <div style="flex:1">
+          <span class="at-label">DTI <span class="at-hint">(참고 · 정책대출 심사 기준)</span></span>
+          <div class="dsr-breakdown">
+            ${effectiveLoan > 0 ? `<div class="dsr-item"><span>└ 주담대 원리금</span><span class="dsr-val">${mp.toFixed(1)}만원/월</span></div>` : ''}
+            ${creditInterestOnly > 0 ? `<div class="dsr-item"><span>└ 신용대출 이자만</span><span class="dsr-val">${creditInterestOnly.toFixed(1)}만원/월</span></div>` : ''}
+            ${minusMonthly > 0 ? `<div class="dsr-item"><span>└ 마이너스통장 이자</span><span class="dsr-val">${minusMonthly.toFixed(1)}만원/월</span></div>` : ''}
+            ${otherMonthly > 0 ? `<div class="dsr-item" style="color:#d1d5db;"><span>└ 기타대출 (이자 분리 불가 · DTI 제외)</span><span class="dsr-val" style="color:#d1d5db;">—</span></div>` : ''}
+            ${income > 0 ? `<div class="dsr-formula">= 월합계 ${(mp + existingInterest).toFixed(1)}만원 × 12 ÷ 연봉 ${income}만원 = ${dti.toFixed(1)}%</div>` : ''}
+          </div>
+          ${income > 0 ? dsrBar(dti) : ''}
+        </div>
+        <span class="at-value" style="font-size:12px;">${income > 0 ? dti.toFixed(1) + '%' : '—'}</span>
+      </div>
       <div class="at-row">
-        <span class="at-label">스트레스 월상환액 <span class="at-hint">(금리 ${(rate + stressAdd).toFixed(1)}% · 스트레스 +${stressAdd}%)</span></span>
-        <span class="at-value">${ltvLoan > 0 ? fmtWan(Math.round(mpStress)) + '/월' : '—'}</span>
+        <span class="at-label">스트레스 월상환액 <span class="at-hint">(기준금리 ${rate}% + 스트레스 +${stressAdd}% = ${(rate + stressAdd).toFixed(1)}%)</span></span>
+        <span class="at-value">${effectiveLoan > 0 ? fmtWan(Math.round(mpStress)) + '/월' : '—'}</span>
       </div>
       <div class="at-row ${dsrClass(dsrStress)}">
         <div style="flex:1">
           <span class="at-label">스트레스 DSR</span>
+          <div class="dsr-breakdown">
+            ${effectiveLoan > 0 ? `<div class="dsr-item"><span>└ 주담대-스트레스 (금리 ${(rate+stressAdd).toFixed(1)}%·${term}년)</span><span class="dsr-val">${mpStress.toFixed(1)}만원/월</span></div>` : ''}
+            ${existingMonthly > 0 ? `<div class="dsr-item"><span>└ 기존 대출 합계</span><span class="dsr-val">${existingMonthly.toFixed(1)}만원/월</span></div>` : ''}
+            ${income > 0 ? `<div class="dsr-formula">= 월합계 ${(mpStress + existingMonthly).toFixed(1)}만원 × 12 ÷ 연봉 ${income}만원 = ${dsrStress.toFixed(1)}%</div>` : ''}
+          </div>
           ${income > 0 ? dsrBar(dsrStress) : ''}
         </div>
         <span class="at-value">${income > 0 ? dsrStress.toFixed(1) + '%' : '—'}</span>
@@ -1078,11 +1250,11 @@ function calcAll() {
       <div class="at-header">이자 분석</div>
       <div class="at-row">
         <span class="at-label">연간 순이자 <span class="at-hint">(${term}년 총이자 ÷ ${term})</span></span>
-        <span class="at-value">${ltvLoan > 0 ? fmtWan(Math.round(annualInterest)) + '/년' : '—'}</span>
+        <span class="at-value">${effectiveLoan > 0 ? fmtWan(Math.round(annualInterest)) + '/년' : '—'}</span>
       </div>
       <div class="at-row">
         <span class="at-label">총 이자 (${term}년)</span>
-        <span class="at-value">${ltvLoan > 0 ? fmtWan(Math.round(totalInterest)) : '—'}</span>
+        <span class="at-value">${effectiveLoan > 0 ? fmtWan(Math.round(totalInterest)) : '—'}</span>
       </div>
     </div>
 
@@ -1092,14 +1264,26 @@ function calcAll() {
       ※ 생애최초 취득세 감면: 12억이하 최대 200만원 / 지방교육세 취득세×10% 추가<br>
       ※ 농어촌특별세: 전용 85㎡ 초과 시 취득세×10% 추가<br>
       ※ 중개보수: 2억~9억 0.4% / 9억~12억 0.5% / 12~15억 0.6% / 15억↑ 0.7% (협의 가능)<br>
+      ※ 등기비용: 법무사 보수 + 인지세(10억이하 15만·초과 35만) + 국민주택채권 할인 손실 추정<br>
       ※ 공급면적: 건축물대장 API 매칭 시 실제값, 미매칭 시 전용/0.74 추정<br>
+      ※ 방공제(소액임차인 최우선변제): 서울 5,500만 / 경기·인천 4,800만 / 기타 2,800만<br>
+      &nbsp;&nbsp;MCI(소액임차보증보험) 가입 시 방공제 없이 LTV 한도까지 대출 가능 → 체크 해제<br>
+      ※ DSR 40% 역산: 연봉 입력 시 실제 받을 수 있는 최대 대출원금 자동 산출<br>
+      &nbsp;&nbsp;실제 적용 대출 = min(방공제 후 LTV 한도, DSR 40% 역산 한도)<br>
       ※ 투기과열·토지거래허가구역(서울전역·경기12곳, ~2026.12.31)<br>
       &nbsp;&nbsp;무주택 LTV 40% / 생애최초 특례 LTV 70% / 1주택 처분조건부 LTV 40%<br>
       &nbsp;&nbsp;가격구간 한도: 15억이하 6억 · 15~25억 4억 · 25억초과 2억<br>
       ※ 기타수도권(인천·경기 나머지): 무주택 LTV 70%, 1주택 LTV 60%, 일괄 6억 한도<br>
       ※ 비수도권: 무주택 LTV 70% (생애최초 80%), 1주택 LTV 60%, 한도 없음<br>
-      ※ 스트레스 DSR 금리: 수도권 +3%, 비수도권 +1.5%<br>
-      ※ DSR = (월상환액 + 신용대출 월이자) × 12 ÷ 연봉 × 100
+      ※ 스트레스 DSR: 10.15 대책(2025.10.16~) 수도권 기준 스트레스 금리 하한 3.0% / 비수도권 0.75%(25년말 유예)<br>
+      &nbsp;&nbsp;금리유형별 적용비율 — 변동금리 100% / 혼합형(5년고정+변동) 80% / 주기형(5년) 40% / 순수고정 0%<br>
+      &nbsp;&nbsp;예) 수도권 혼합형: 3.0%×80%=2.4% / 수도권 변동: 3.0% / 수도권 주기형: 3.0%×40%=1.2%<br>
+      ※ DSR = (신규주담대 원리금 + 기존대출 월상환합계) × 12 ÷ 연봉 (은행 심사 기준)<br>
+      ※ DTI = (신규주담대 원리금 + 기존대출 이자합계) × 12 ÷ 연봉 (정책대출 심사 참고)<br>
+      ※ 신용대출 DSR 산정: 실제 상환방식 무관, 원금균등분할상환 가정 (최소 5년/60개월)<br>
+      &nbsp;&nbsp;만기일시상환이라도 60개월 원금균등 기준 DSR 적용 (금감원 2021년 가계부채 관리방안)<br>
+      ※ 마이너스통장: 한도 × 이율 / 12 이자만 DSR/DTI 반영 (금감원 기준)<br>
+      ※ 전세대출: DSR 산정 제외 → 기타 대출에 입력하지 마세요
     </p>
   `;
 }

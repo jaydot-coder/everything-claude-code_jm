@@ -103,7 +103,22 @@
       "Bash(curl -s \"http://localhost:3000/api/building-area?sigunguCd=41597&bun=0973&ji=0000\")",
       "Bash(echo \"PID: $!\")",
       "PowerShell(node -e \"const fs=require\\('fs'\\); try { new Function\\(fs.readFileSync\\('C:/jm_first_coding/claudecode_jm/real-estate-web/public/app.js','utf8'\\)\\); console.log\\('OK'\\); } catch\\(e\\) { console.error\\('SYNTAX ERROR:', e.message\\); }\" 2>&1)",
-      "Bash(curl -s http://localhost:3000 -o /dev/null -w \"HTTP %{http_code}\")"
+      "Bash(curl -s http://localhost:3000 -o /dev/null -w \"HTTP %{http_code}\")",
+      "Bash(curl -s http://localhost:3000 -o /dev/null -w \"%{http_code}\")",
+      "PowerShell(Get-Process *)",
+      "PowerShell(netstat *)",
+      "WebFetch(domain:www.fsc.go.kr)",
+      "WebFetch(domain:kbthink.com)",
+      "WebFetch(domain:www.banksalad.com)",
+      "WebFetch(domain:fsc.go.kr)",
+      "WebFetch(domain:portal.kfb.or.kr)",
+      "WebFetch(domain:kbcapital.co.kr)",
+      "WebFetch(domain:www.welfarehello.com)",
+      "WebFetch(domain:m.hanabank.com)",
+      "WebFetch(domain:toss.im)",
+      "WebFetch(domain:www.bank-mall.co.kr)",
+      "WebFetch(domain:files-scs.pstatic.net)",
+      "WebFetch(domain:www.newsis.com)"
     ]
   }
 }
