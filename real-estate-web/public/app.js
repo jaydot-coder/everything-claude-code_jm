@@ -258,6 +258,7 @@ let sortDir       = -1;     // 1 = 오름차순, -1 = 내림차순
 let _chart        = null;   // Chart.js 인스턴스
 let _compareChart = null;   // 단지 비교 Chart.js 인스턴스
 let selectedCompareApts = new Set(); // 최대 3개
+let compareAptTrades   = {};        // { aptName: trades[] } — 체크 시점 스냅샷, 필터 변경에 독립
 let _rentData     = null;   // { rents:[], map:{} }
 let _bldgCache    = {};     // key:"sggCd|bun|ji" → areaMap
 let _supplyFetchAbort = null; // fetchAllSupplyAreas 취소 신호
@@ -296,6 +297,14 @@ document.addEventListener('keydown', e => {
   else if ((e.ctrlKey || e.metaKey) && e.key === 'e') { e.preventDefault(); exportCSV(); }
   else if (e.key === 'Escape') clearTrade();
 });
+
+// aptFilter: Enter → doSearch (계산기 입력란과 분리)
+(function () {
+  const af = document.getElementById('aptFilter');
+  if (af) af.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); doSearch(); }
+  });
+})();
 
 function buildSido() {
   const sel = document.getElementById('sidoSel');
@@ -1638,18 +1647,23 @@ function addCompareApt(aptName, checked) {
     if (selectedCompareApts.size >= 3) {
       const status = document.getElementById('compareStatus');
       if (status) status.textContent = '최대 3개까지 선택할 수 있습니다.';
-      renderTable(); // 체크박스 UI 동기화
+      renderTable();
       return;
     }
     selectedCompareApts.add(aptName);
+    // 체크 시점의 allTrades 스냅샷 저장 (이후 필터 변경 / 재조회에 독립)
+    compareAptTrades[aptName] = allTrades.filter(t => t.aptName === aptName);
   } else {
     selectedCompareApts.delete(aptName);
+    delete compareAptTrades[aptName];
   }
+  renderTable(); // 체크박스 상태 즉시 동기화
   renderCompareChart();
 }
 
 function clearCompareApts() {
   selectedCompareApts.clear();
+  compareAptTrades = {};
   if (_compareChart) { _compareChart.destroy(); _compareChart = null; }
   const area = document.getElementById('compareChartArea');
   if (area) area.style.display = 'none';
@@ -1671,10 +1685,10 @@ function renderCompareChart() {
   const status = document.getElementById('compareStatus');
   if (status) status.textContent = `선택 단지: ${[...selectedCompareApts].join(' · ')}  (최대 3개)`;
 
-  // 단지별 월평균가 집계
+  // 단지별 월평균가 집계 — compareAptTrades 캐시 사용 (필터/재조회에 독립)
   const COLORS = ['#2563eb', '#dc2626', '#059669'];
   const datasets = [...selectedCompareApts].map((name, i) => {
-    const trades = filteredTrades.filter(t => t.aptName === name);
+    const trades = compareAptTrades[name] || [];
     const monthly = {};
     trades.forEach(t => {
       const key = `${t.year}-${String(t.month).padStart(2,'0')}`;
@@ -1682,12 +1696,13 @@ function renderCompareChart() {
       monthly[key].sum += t.dealAmount;
       monthly[key].cnt += 1;
     });
-    // 전체 라벨 범위에서 없는 달은 null
     return { name, monthly };
   });
 
+  // 모든 캐시 단지의 거래 기간을 합산해 라벨 생성
   const allLabels = [...new Set(
-    filteredTrades.map(t => `${t.year}-${String(t.month).padStart(2,'0')}`)
+    Object.values(compareAptTrades).flat()
+      .map(t => `${t.year}-${String(t.month).padStart(2,'0')}`)
   )].sort();
 
   if (_compareChart) { _compareChart.destroy(); _compareChart = null; }
