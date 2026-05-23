@@ -267,15 +267,15 @@ function tokenMatchScore(aptName, query) {
 }
 
 function nameMatches(aptName, query) {
-  return tokenMatchScore(aptName, query) > 0;
+  return tokenMatchScore(aptName, query) === 1;
 }
 
 // ── 상태 ──────────────────────────────────────────────────────────────────────
 let allTrades     = [];
 let allRents      = [];     // 기간 검색 시 수집된 순전세 거래 목록
 let filteredTrades = [];
-let selectedArea  = null;   // null = 전체, number = Math.round(㎡)
-let selectedDong  = null;   // null = 전체, string = 법정동명
+let selectedAreas = new Set();  // empty = 전체, Set<number> = Math.round(㎡)
+let selectedDongs = new Set();  // empty = 전체, Set<string> = 법정동명
 let sortKey       = 'date'; // 정렬 기준 컬럼
 let sortDir       = -1;     // 1 = 오름차순, -1 = 내림차순
 let _chart        = null;   // Chart.js 인스턴스
@@ -284,15 +284,38 @@ let _bldgCache    = {};     // key:"sggCd|bun|ji" → areaMap
 let _supplyFetchAbort = null; // fetchAllSupplyAreas 취소 신호
 let selectedTradeArea       = null; // 선택된 거래 전용면적(㎡)
 let selectedTradeSupplyArea = null; // 건축물대장 실제 공급면적(㎡)
+let _priceHistoryMap = {};     // 단지+면적별 가격 이력 맵 (신고가·변동률용)
+let _saveTimer       = null;   // 입력값 자동저장 debounce 타이머
+
+const SAVE_FIELDS = [
+  'annualIncome','liquidAssets','creditLoan','currentAptPrice','currentMortgage',
+  'creditRate','creditRepayType','creditTerm',
+  'minusLimit','minusRate','otherLoanMonthly',
+  'aptNameInput','targetPrice','kbPrice','ltvPct',
+  'intRate','rateType','loanTerm','houseCount',
+  'firstBuyer','bangGongjeCheck',
+];
 
 // ── 초기화 ────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   buildSido();
   setDefaultMonth();
+  restoreFromURL();
+  restoreInputs();
   applyLtvPolicy();
   updateCreditDisplay();
   updateMinusDisplay();
   calcAll();
+  renderSearchHistory();
+  renderScenarios();
+  initDarkMode();
+});
+
+document.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); doSearch(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveScenario(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key === 'e') { e.preventDefault(); exportCSV(); }
+  else if (e.key === 'Escape') clearTrade();
 });
 
 function buildSido() {
@@ -392,8 +415,8 @@ async function doSearch() {
       const results = await Promise.all(batch.map(async m => {
         const dealYmd = m.replace('-', '');
         const [tradeRes, rentJson] = await Promise.all([
-          fetch(`/api/apt-trade?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`),
-          fetch(`/api/apt-rent?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`)
+          withRetry(() => fetch(`/api/apt-trade?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`)),
+          withRetry(() => fetch(`/api/apt-rent?lawd_cd=${lawdCd}&deal_ymd=${dealYmd}`))
             .then(r => r.ok ? r.json() : null).catch(() => null),
         ]);
         const tradeData = await tradeRes.json();
@@ -408,8 +431,8 @@ async function doSearch() {
 
     allTrades    = merged;
     allRents     = mergedRents;
-    selectedArea = null;
-    selectedDong = null;
+    selectedAreas = new Set();
+    selectedDongs = new Set();
     _rentData    = null;
     document.getElementById('rentArea').innerHTML = '';
     applyFilter();
@@ -421,6 +444,7 @@ async function doSearch() {
       : `${months[0].replace('-', '년 ')}월`;
     document.getElementById('updateBadge').textContent =
       `${sido} ${gugunName} ${periodLabel} · ${new Date().toLocaleTimeString('ko-KR')} 업데이트`;
+    saveSearchHistory({ sido, gugun: gugunName, lawdCd, months });
 
   } catch (e) {
     document.getElementById('tableArea').innerHTML = `<div class="error">⚠️ ${e.message}</div>`;
@@ -441,16 +465,16 @@ function applyFilter() {
   renderDongChips(nameFiltered);
 
   // 3) 동 필터
-  const dongFiltered = selectedDong
-    ? nameFiltered.filter(t => t.dong === selectedDong)
+  const dongFiltered = selectedDongs.size > 0
+    ? nameFiltered.filter(t => selectedDongs.has(t.dong))
     : [...nameFiltered];
 
   // 4) 면적 칩 렌더 (동 필터 후 기준)
   renderAreaChips(dongFiltered);
 
   // 5) 면적 필터
-  filteredTrades = selectedArea !== null
-    ? dongFiltered.filter(t => Math.round(t.area) === selectedArea)
+  filteredTrades = selectedAreas.size > 0
+    ? dongFiltered.filter(t => selectedAreas.has(Math.round(t.area)))
     : [...dongFiltered];
 
   // 6) 정렬
@@ -473,6 +497,7 @@ function applyFilter() {
     return sortDir * (va - vb);
   });
 
+  _priceHistoryMap = buildPriceHistoryMap(allTrades);
   renderStats();
   renderChart(filteredTrades);
   if (_rentData) renderRentSummary();
@@ -491,7 +516,7 @@ function applyFilter() {
     // 칩·테이블 한 번에 렌더링
     const q  = document.getElementById('aptFilter').value.trim().toLowerCase();
     const nf = q ? allTrades.filter(t => nameMatches(t.aptName, q)) : [...allTrades];
-    const df = selectedDong ? nf.filter(t => t.dong === selectedDong) : [...nf];
+    const df = selectedDongs.size > 0 ? nf.filter(t => selectedDongs.has(t.dong)) : [...nf];
     renderAreaChips(df);
     renderTable();
   }).catch(() => {
@@ -517,12 +542,12 @@ function renderAreaChips(nameFiltered) {
   // 면적 종류가 1개 이하면 칩 불필요
   if (areas.length <= 1) {
     el.innerHTML = '';
-    if (selectedArea !== null && !counts[selectedArea]) selectedArea = null;
+    selectedAreas.forEach(a => { if (!counts[a]) selectedAreas.delete(a); });
     return;
   }
 
   // 선택된 면적이 현재 결과에 없으면 초기화
-  if (selectedArea !== null && !counts[selectedArea]) selectedArea = null;
+  selectedAreas.forEach(a => { if (!counts[a]) selectedAreas.delete(a); });
 
   const total = nameFiltered.length;
   // 전용면적 그룹별 실제 공급면적 평균
@@ -552,7 +577,7 @@ function renderAreaChips(nameFiltered) {
 
   el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px;">${
     chips.map(c => {
-      const on = c.area === selectedArea;
+      const on = c.area === null ? selectedAreas.size === 0 : selectedAreas.has(c.area);
       return `<button onclick="selectArea(${c.area})"
         style="padding:4px 11px;border:1.5px solid ${on ? '#2563eb' : '#e2e8f0'};
                border-radius:20px;font-size:11px;font-weight:700;cursor:pointer;
@@ -564,7 +589,13 @@ function renderAreaChips(nameFiltered) {
 }
 
 function selectArea(area) {
-  selectedArea = area;
+  if (area === null) {
+    selectedAreas.clear();
+  } else if (selectedAreas.has(area)) {
+    selectedAreas.delete(area);
+  } else {
+    selectedAreas.add(area);
+  }
   applyFilter();
 }
 
@@ -581,9 +612,7 @@ function renderDongChips(trades) {
     el.innerHTML = '';
     return;
   }
-  if (selectedDong && !counts[selectedDong]) selectedDong = null;
-
-  if (selectedDong && !counts[selectedDong]) selectedDong = null;
+  selectedDongs.forEach(d => { if (!counts[d]) selectedDongs.delete(d); });
 
   const chips = [
     { dong: null, label: `전체 ${trades.length.toLocaleString()}건` },
@@ -592,7 +621,7 @@ function renderDongChips(trades) {
 
   el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px;">${
     chips.map(c => {
-      const on = c.dong === selectedDong;
+      const on = c.dong === null ? selectedDongs.size === 0 : selectedDongs.has(c.dong);
       const arg = c.dong === null ? 'null' : `'${esc(c.dong)}'`;
       return `<button onclick="selectDong(${arg})"
         style="padding:4px 11px;border:1.5px solid ${on ? '#7c3aed' : '#e2e8f0'};
@@ -605,7 +634,13 @@ function renderDongChips(trades) {
 }
 
 function selectDong(dong) {
-  selectedDong = dong;
+  if (dong === null) {
+    selectedDongs.clear();
+  } else if (selectedDongs.has(dong)) {
+    selectedDongs.delete(dong);
+  } else {
+    selectedDongs.add(dong);
+  }
   applyFilter();
 }
 
@@ -879,10 +914,18 @@ function renderTable() {
       ? `${(supM2 / 3.3058).toFixed(1)}평/${supM2.toFixed(1)}㎡<br><span class="t-muted">(전용 ${exclPyeong}평/${t.area.toFixed(1)}㎡)</span>`
       : `—<br><span class="t-muted">(전용 ${exclPyeong}평/${t.area.toFixed(1)}㎡)</span>`;
     const ppp = supM2 != null ? Math.round(t.dealAmount / (supM2 / 3.3058)) : 0;
+    const histKey = `${t.aptName}|${Math.round(t.area)}`;
+    const hist = _priceHistoryMap[histKey];
+    const isHigh = hist && t.dealAmount >= hist.max;
+    const changePct = hist && hist.prev != null && hist.prev !== t.dealAmount
+      ? ((t.dealAmount - hist.prev) / hist.prev * 100).toFixed(1) : null;
+    const changeBadge = changePct != null
+      ? `<span style="font-size:10px;margin-left:4px;color:${+changePct > 0 ? '#ef4444' : '#3b82f6'}">
+          ${+changePct > 0 ? '▲' : '▼'}${Math.abs(changePct)}%</span>` : '';
     return `<tr>
-      <td class="t-apt">${esc(t.aptName)}</td>
+      <td class="t-apt">${esc(t.aptName)}${isHigh ? ' <span style="font-size:10px;background:#fef9c3;color:#854d0e;padding:1px 4px;border-radius:3px;font-weight:600;">신고가</span>' : ''}</td>
       <td class="t-muted" style="white-space:nowrap;">${esc(t.dong)}</td>
-      <td class="t-price">${fmtWan(t.dealAmount)}</td>
+      <td class="t-price">${fmtWan(t.dealAmount)}${changeBadge}</td>
       <td style="font-size:11px;color:#6b7280;white-space:nowrap;">${ppp > 0 ? fmtWan(ppp) + '/평' : '—'}</td>
       <td class="t-area">${supCell}</td>
       <td>${t.floor}층</td>
@@ -978,132 +1021,139 @@ function monthlyPayment(principal, annualRate, termYears) {
   return principal * r * Math.pow(1 + r, n) / (Math.pow(1 + r, n) - 1);
 }
 
-function calcAll() {
-  // ── 재무 현황 입력값 ──
-  const income          = +document.getElementById('annualIncome').value    || 0;
-  const liquidAssets    = +document.getElementById('liquidAssets').value    || 0;
-  const creditLoan      = +document.getElementById('creditLoan').value      || 0;
-  const currentAptPrice = +document.getElementById('currentAptPrice').value || 0;
-  const currentMortgage = +document.getElementById('currentMortgage').value || 0;
-  const creditRate      = +document.getElementById('creditRate').value      || 0;
+function readLoanInputs() {
+  const houseCount = +document.getElementById('houseCount').value || 0;
+  return {
+    income:          +document.getElementById('annualIncome').value    || 0,
+    liquidAssets:    +document.getElementById('liquidAssets').value    || 0,
+    creditLoan:      +document.getElementById('creditLoan').value      || 0,
+    currentAptPrice: +document.getElementById('currentAptPrice').value || 0,
+    currentMortgage: +document.getElementById('currentMortgage').value || 0,
+    creditRate:      +document.getElementById('creditRate').value      || 0,
+    creditRepayType: document.getElementById('creditRepayType')?.value || 'interest',
+    creditTermMo:    +document.getElementById('creditTerm')?.value     || 60,
+    minusLimit:      +document.getElementById('minusLimit')?.value     || 0,
+    minusRate:       +document.getElementById('minusRate')?.value      || 0,
+    otherMonthly:    +document.getElementById('otherLoanMonthly')?.value || 0,
+    target:          +document.getElementById('targetPrice').value     || 0,
+    kbPrice:         +document.getElementById('kbPrice').value         || 0,
+    ltvPct:          +document.getElementById('ltvPct').value          || 60,
+    rate:            +document.getElementById('intRate').value         || 4.5,
+    term:            +document.getElementById('loanTerm').value        || 30,
+    houseCount,
+    isFirstBuyer:    (document.getElementById('firstBuyer')?.checked ?? false) && houseCount === 0,
+    lawdCd:          document.getElementById('gugunSel').value,
+    rateType:        document.getElementById('rateType')?.value        || 'hybrid',
+    bangGongjeApply: document.getElementById('bangGongjeCheck')?.checked ?? true,
+    gracePeriod:     +document.getElementById('gracePeriod')?.value     || 0,
+    excluArea:       selectedTradeArea || 85,
+  };
+}
 
-  // 신용대출 상환방식 (실제 납부액 표시용)
-  const creditRepayType = document.getElementById('creditRepayType')?.value || 'interest';
-  const creditTermMo    = +document.getElementById('creditTerm')?.value || 60;
-  // DSR 산정: 실제 상환방식 무관, 원금균등분할상환 가정 (금감원 기준)
-  // 단기 대출도 최소 60개월(5년) 기준 적용 → 우회 방지
-  const creditDsrTerm   = Math.max(creditTermMo, 60);
-  const creditMonthly   = (creditLoan > 0 && creditRate > 0)
-    ? monthlyPayment(creditLoan, creditRate, creditDsrTerm / 12)
-    : 0;
-  // DTI용 이자만 (원금 제외)
+function computeLoan(inp) {
+  const {
+    income, liquidAssets, creditLoan, currentAptPrice, currentMortgage,
+    creditRate, creditTermMo, minusLimit, minusRate, otherMonthly,
+    target, kbPrice, ltvPct, rate, term, houseCount, isFirstBuyer,
+    lawdCd, rateType, bangGongjeApply, gracePeriod, excluArea,
+  } = inp;
+
+  const creditDsrTerm      = Math.max(creditTermMo, 60);
+  const creditMonthly      = (creditLoan > 0 && creditRate > 0)
+    ? monthlyPayment(creditLoan, creditRate, creditDsrTerm / 12) : 0;
   const creditInterestOnly = creditLoan * creditRate / 100 / 12;
-  // 마이너스통장 (한도 × 이율 / 12, 이자만 DSR/DTI 반영)
-  const minusLimit   = +document.getElementById('minusLimit')?.value   || 0;
-  const minusRate    = +document.getElementById('minusRate')?.value    || 0;
-  const minusMonthly = minusLimit * minusRate / 100 / 12;
-  // 기타 대출 월상환액 (자동차·학자금 등)
-  const otherMonthly = +document.getElementById('otherLoanMonthly')?.value || 0;
-  // 기존 대출 합계: DSR용(원리금) / DTI용(이자만)
-  const existingMonthly  = creditMonthly + minusMonthly + otherMonthly;
-  const existingInterest = creditInterestOnly + minusMonthly; // 기타는 이자 분리 불가 → DTI 보수적
+  const minusMonthly       = minusLimit * minusRate / 100 / 12;
+  const existingMonthly    = creditMonthly + minusMonthly + otherMonthly;
+  const existingInterest   = creditInterestOnly + minusMonthly;
 
-  // ── 목표 아파트 입력값 ──
-  const target    = +document.getElementById('targetPrice').value  || 0;
-  const kbPrice   = +document.getElementById('kbPrice').value      || 0;
-  const ltvPct    = +document.getElementById('ltvPct').value       || 60;
-  const rate      = +document.getElementById('intRate').value      || 4.5;
-  const term      = +document.getElementById('loanTerm').value     || 30;
+  const regionType  = getRegionType(lawdCd);
+  const basePrice   = kbPrice > 0 ? kbPrice : target;
+  const rawLtvLoan  = Math.floor(basePrice * ltvPct / 100);
+  let ltvLoan = rawLtvLoan;
+  let capInfo = null;
+  if (houseCount < 2) {
+    const capResult = getLoanAmountCap(regionType, basePrice);
+    if (capResult && rawLtvLoan > capResult.cap) { ltvLoan = capResult.cap; capInfo = capResult; }
+  }
+
+  const bangGongjeAmt = bangGongjeApply ? getBangGongje(regionType) : 0;
+  const loanAfterBG   = Math.max(0, ltvLoan - bangGongjeAmt);
+  const dsrMaxLoan    = income > 0 && rate > 0 ? maxLoanFromDSR(income, existingMonthly, rate, term) : null;
+  let effectiveLoan   = loanAfterBG;
+  let dsrCapApplied   = false;
+  if (dsrMaxLoan !== null && dsrMaxLoan < loanAfterBG) { effectiveLoan = Math.max(0, dsrMaxLoan); dsrCapApplied = true; }
+
+  const remainCash    = liquidAssets + currentAptPrice - currentMortgage;
+  const totalFunds    = remainCash + effectiveLoan;
+  const taxInfo       = calcAcquisitionTax(target, lawdCd, houseCount, excluArea, isFirstBuyer);
+  const buyFee        = calcAgencyFee(target);
+  const sellFee       = currentAptPrice > 0 ? calcAgencyFee(currentAptPrice) : { fee: 0, rate: '0' };
+  const regFee        = calcRegistrationFee(target);
+  const totalAcqCost  = taxInfo.total + buyFee.fee + sellFee.fee + regFee;
+  const requiredFunds = target + totalAcqCost;
+  const surplus       = totalFunds - requiredFunds;
+  const canBuy        = surplus >= 0;
+
+  const mp            = monthlyPayment(effectiveLoan, rate, term);
+  // 거치기간: 거치 중 이자만 납부, DSR은 거치 종료 후 원리금 기준 (금감원 기준)
+  const graceInterest = effectiveLoan * rate / 100 / 12;
+  const graceRemTerm  = term - gracePeriod;
+  const mpAfterGrace  = gracePeriod > 0 && graceRemTerm > 0
+    ? monthlyPayment(effectiveLoan, rate, graceRemTerm) : mp;
+  const mpForDsr      = gracePeriod > 0 ? mpAfterGrace : mp;
+  const dsr           = income > 0 ? (mpForDsr + existingMonthly) * 12 / income * 100 : 0;
+  const dti           = income > 0 ? (mpForDsr + existingInterest) * 12 / income * 100 : 0;
+
+  const baseStress    = (regionType !== 'other') ? 3.0 : 0.75;
+  const stressFactor  = rateType === 'variable' ? 1.0 : rateType === 'hybrid' ? 0.8 : rateType === 'periodic' ? 0.4 : 0.0;
+  const stressAdd     = +(baseStress * stressFactor).toFixed(2);
+  const mpStress      = monthlyPayment(effectiveLoan, rate + stressAdd, term);
+  const dsrStress     = income > 0 ? (mpStress + existingMonthly) * 12 / income * 100 : 0;
+  const totalInterest  = mp * term * 12 - effectiveLoan;
+  const annualInterest = term > 0 ? totalInterest / term : 0;
+
+  return {
+    income, currentAptPrice, target, kbPrice, ltvPct, rate, term, houseCount, isFirstBuyer,
+    bangGongjeApply, rateType, gracePeriod, excluArea,
+    creditDsrTerm, creditMonthly, creditInterestOnly,
+    minusMonthly, otherMonthly, existingMonthly, existingInterest,
+    remainCash, regionType, rawLtvLoan, ltvLoan, capInfo,
+    bangGongjeAmt, loanAfterBG, dsrMaxLoan, effectiveLoan, dsrCapApplied,
+    totalFunds, taxInfo, buyFee, sellFee, regFee, totalAcqCost,
+    requiredFunds, surplus, canBuy,
+    mp, graceInterest, mpAfterGrace, graceRemTerm, mpForDsr,
+    dsr, dti, stressAdd, mpStress, dsrStress,
+    totalInterest, annualInterest,
+  };
+}
+
+function calcAll() {
+  saveInputsDebounced();
+  const inp = readLoanInputs();
 
   const el = document.getElementById('resultArea');
 
-  if (!target) {
+  if (!inp.target) {
     el.innerHTML = `<div class="empty">호가를 입력하면 자동으로 계산됩니다.</div>`;
     return;
   }
 
-  // ── 핵심 계산 ──
-
-  // 잔여 현금 = 유동자산 + 현재 아파트 예상 매도가 - 현재 주담대
-  const remainCash = liquidAssets + currentAptPrice - currentMortgage;
-
-  // 생애최초 여부
-  const houseCount    = +document.getElementById('houseCount').value || 0;
-  const isFirstBuyer  = document.getElementById('firstBuyer')?.checked && houseCount === 0;
-
-  // LTV 기준 한도 대출 = KB시세(또는 호가) × LTV%
-  const lawdCd    = document.getElementById('gugunSel').value;
-  const regionType = getRegionType(lawdCd);
-  const basePrice = kbPrice > 0 ? kbPrice : target;
-  const rawLtvLoan = Math.floor(basePrice * ltvPct / 100);
-  let ltvLoan = rawLtvLoan;
-  let capInfo = null;
-
-  // 지역·가격 구간별 대출 금액 한도 적용 (2025.10.16 기준)
-  if (houseCount < 2) {
-    const capResult = getLoanAmountCap(regionType, basePrice);
-    if (capResult && rawLtvLoan > capResult.cap) {
-      ltvLoan  = capResult.cap;
-      capInfo  = capResult;
-    }
-  }
-
-  // 방공제 차감 옵션 (MCI 미가입 시 체크)
-  const bangGongjeApply = document.getElementById('bangGongjeCheck')?.checked ?? true;
-  const bangGongjeAmt   = bangGongjeApply ? getBangGongje(regionType) : 0;
-  const loanAfterBG     = Math.max(0, ltvLoan - bangGongjeAmt);
-
-  // DSR 40% 역산 최대 대출 (기존 대출 합계 전체 차감)
-  const dsrMaxLoan = income > 0 && rate > 0 ? maxLoanFromDSR(income, existingMonthly, rate, term) : null;
-
-  // 실제 적용 대출 = min(방공제 후 LTV 한도, DSR 40% 역산)
-  let effectiveLoan = loanAfterBG;
-  let dsrCapApplied = false;
-  if (dsrMaxLoan !== null && dsrMaxLoan < loanAfterBG) {
-    effectiveLoan = Math.max(0, dsrMaxLoan);
-    dsrCapApplied = true;
-  }
-
-  // 방공제 힌트 텍스트 업데이트
+  const r = computeLoan(inp);
+  const {
+    income, currentAptPrice, target, kbPrice, ltvPct, rate, term, houseCount, isFirstBuyer,
+    bangGongjeApply, rateType, gracePeriod, excluArea,
+    creditDsrTerm, creditMonthly, creditInterestOnly,
+    minusMonthly, otherMonthly, existingMonthly, existingInterest,
+    remainCash, regionType, rawLtvLoan, ltvLoan, capInfo,
+    bangGongjeAmt, loanAfterBG, dsrMaxLoan, effectiveLoan, dsrCapApplied,
+    totalFunds, taxInfo, buyFee, sellFee, regFee, totalAcqCost,
+    requiredFunds, surplus, canBuy,
+    mp, graceInterest, mpAfterGrace, graceRemTerm, mpForDsr,
+    dsr, dti, stressAdd, mpStress, dsrStress,
+    totalInterest, annualInterest,
+  } = r;
   const bgHint = document.getElementById('bangGongjeHint');
-  if (bgHint) bgHint.textContent = `(${fmtWan(getBangGongje(regionType))})`;
-
-  // 대출 + 현금 합계
-  const totalFunds = remainCash + effectiveLoan;
-
-  // ── 취득 비용 계산 ──
-  const excluArea = selectedTradeArea || 85; // 면적 미선택 시 85㎡ 기본
-  const taxInfo   = calcAcquisitionTax(target, lawdCd, houseCount, excluArea, isFirstBuyer);
-  const buyFee    = calcAgencyFee(target);
-  const sellFee   = currentAptPrice > 0 ? calcAgencyFee(currentAptPrice) : { fee: 0, rate: '0' };
-  const regFee    = calcRegistrationFee(target);
-  const totalAcqCost = taxInfo.total + buyFee.fee + sellFee.fee + regFee;
-
-  // 실제 필요 자금 = 호가 + 취득비용
-  const requiredFunds = target + totalAcqCost;
-  const surplus = totalFunds - requiredFunds;
-  const canBuy  = surplus >= 0;
-
-  // 원리금 균등상환 월상환액 (실제 적용 대출 기준)
-  const mp = monthlyPayment(effectiveLoan, rate, term);
-
-  // DSR = (신규주담대 원리금 + 기존 대출 합계) × 12 / 연봉
-  const dsr = income > 0 ? (mp + existingMonthly) * 12 / income * 100 : 0;
-  // DTI = (신규주담대 원리금 + 기존 대출 이자합계) × 12 / 연봉  (정책대출 심사 기준)
-  const dti = income > 0 ? (mp + existingInterest) * 12 / income * 100 : 0;
-
-  // 스트레스 DSR: 10.15 대책(2025.10.16~) 수도권 기준금리 하한 3%로 상향
-  // 비수도권: 0.75% 유예(25년말), 금리유형별: 변동100%/혼합형80%/주기형40%/순수고정0%
-  const baseStress   = (regionType !== 'other') ? 3.0 : 0.75;
-  const rateType     = document.getElementById('rateType')?.value || 'hybrid';
-  const stressFactor = rateType === 'variable' ? 1.0 : rateType === 'hybrid' ? 0.8 : rateType === 'periodic' ? 0.4 : 0.0;
-  const stressAdd    = +(baseStress * stressFactor).toFixed(2);
-  const mpStress  = monthlyPayment(effectiveLoan, rate + stressAdd, term);
-  const dsrStress = income > 0 ? (mpStress + existingMonthly) * 12 / income * 100 : 0;
-
-  // 연간 순이자 = (총상환액 - 대출원금) / 만기
-  const totalInterest  = mp * term * 12 - effectiveLoan;
-  const annualInterest = term > 0 ? totalInterest / term : 0;
+  if (bgHint) bgHint.textContent = `(${fmtWan(bangGongjeAmt)})`;
 
   // ── 결과 렌더링 ──
   const aptName = document.getElementById('aptNameInput').value.trim();
@@ -1196,9 +1246,18 @@ function calcAll() {
     <div class="at-group">
       <div class="at-header">상환 부담</div>
       <div class="at-row">
-        <span class="at-label">신규 주담대 월상환액 <span class="at-hint">(금리 ${rate}% · ${fmtWan(effectiveLoan)})</span></span>
+        <span class="at-label">신규 주담대 월상환액 <span class="at-hint">(금리 ${rate}% · ${fmtWan(effectiveLoan)}${gracePeriod > 0 ? ` · 거치${gracePeriod}년` : ''})</span></span>
         <span class="at-value">${effectiveLoan > 0 ? fmtWan(Math.round(mp)) + '/월' : '—'}</span>
       </div>
+      ${gracePeriod > 0 && effectiveLoan > 0 ? `
+      <div class="at-row">
+        <span class="at-label">거치 중 이자납부 <span class="at-hint">(${gracePeriod}년 이자만)</span></span>
+        <span class="at-value">${fmtWan(Math.round(graceInterest))}/월</span>
+      </div>
+      <div class="at-row">
+        <span class="at-label">거치 후 원리금 <span class="at-hint">(잔여 ${graceRemTerm}년 원리금균등 · DSR 산정 기준)</span></span>
+        <span class="at-value">${fmtWan(Math.round(mpAfterGrace))}/월</span>
+      </div>` : ''}
       <div class="at-row ${dsrClass(dsr)}">
         <div style="flex:1">
           <span class="at-label">DSR <span class="at-hint">(총부채원리금상환비율 · 은행 심사)</span></span>
@@ -1454,4 +1513,355 @@ function calcAgencyFee(price) {
   else if (price < 20000) fee = Math.min(fee, 80);
 
   return { fee, rate: (rate * 100).toFixed(1) };
+}
+
+// ── Phase 1: localStorage 자동저장 ────────────────────────────────────────────
+function saveInputs() {
+  const vals = {};
+  SAVE_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    vals[id] = el.type === 'checkbox' ? el.checked : el.value;
+  });
+  try { localStorage.setItem('re_inputs_v1', JSON.stringify(vals)); } catch (_) {}
+}
+
+function saveInputsDebounced() {
+  clearTimeout(_saveTimer);
+  _saveTimer = setTimeout(saveInputs, 600);
+}
+
+function restoreInputs() {
+  let vals;
+  try { vals = JSON.parse(localStorage.getItem('re_inputs_v1') || 'null'); } catch (_) { return; }
+  if (!vals) return;
+  SAVE_FIELDS.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el || !(id in vals)) return;
+    if (el.type === 'checkbox') el.checked = vals[id];
+    else el.value = vals[id];
+  });
+}
+
+// ── Phase 1: 신고가 맵 빌드 ───────────────────────────────────────────────────
+function buildPriceHistoryMap(trades) {
+  const map = {};
+  const sorted = [...trades].sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year;
+    if (a.month !== b.month) return a.month - b.month;
+    return (a.day || 0) - (b.day || 0);
+  });
+  sorted.forEach(t => {
+    const key = `${t.aptName}|${Math.round(t.area)}`;
+    if (!map[key]) {
+      map[key] = { max: t.dealAmount, prev: null };
+    } else {
+      map[key].prev = map[key].max;
+      if (t.dealAmount > map[key].max) map[key].max = t.dealAmount;
+    }
+  });
+  return map;
+}
+
+// ── Phase 1: CSV 내보내기 ─────────────────────────────────────────────────────
+function exportCSV() {
+  if (!filteredTrades.length) { alert('내보낼 데이터가 없습니다.'); return; }
+  const BOM = '﻿';
+  const header = ['아파트명', '동', '거래금액(만원)', '전용면적(㎡)', '공급면적(㎡)', '층', '계약년', '계약월', '계약일', '건축년도'].join(',');
+  const lines = filteredTrades.map(t => {
+    const supM2 = getSupM2(t);
+    return [
+      `"${t.aptName}"`, `"${t.dong}"`, t.dealAmount,
+      t.area.toFixed(2), supM2 != null ? supM2.toFixed(2) : '',
+      t.floor, t.year, t.month, t.day || '', t.buildYear,
+    ].join(',');
+  });
+  const csv = BOM + header + '\n' + lines.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `실거래가_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Phase 1: 검색 히스토리 ────────────────────────────────────────────────────
+function saveSearchHistory({ sido, gugun, lawdCd, months }) {
+  let hist;
+  try { hist = JSON.parse(localStorage.getItem('re_search_hist_v1') || '[]'); } catch (_) { hist = []; }
+  hist = hist.filter(h => h.lawdCd !== lawdCd || h.months !== months);
+  hist.unshift({ sido, gugun, lawdCd, months, ts: Date.now() });
+  if (hist.length > 10) hist.length = 10;
+  try { localStorage.setItem('re_search_hist_v1', JSON.stringify(hist)); } catch (_) {}
+  renderSearchHistory();
+}
+
+function renderSearchHistory() {
+  const container = document.getElementById('searchHistoryRow');
+  if (!container) return;
+  let hist;
+  try { hist = JSON.parse(localStorage.getItem('re_search_hist_v1') || '[]'); } catch (_) { hist = []; }
+  if (!hist.length) { container.innerHTML = ''; return; }
+  const chips = hist.map((h, i) =>
+    `<button class="chip" onclick="replaySearch(${i})" title="${h.sido} ${h.gugun} ${h.months}개월">${h.gugun}</button>`
+  ).join(' ');
+  container.innerHTML = `<div style="margin:6px 0 2px;font-size:11px;color:#9ca3af;">최근 검색</div><div>${chips}</div>`;
+}
+
+function replaySearch(idx) {
+  let hist;
+  try { hist = JSON.parse(localStorage.getItem('re_search_hist_v1') || '[]'); } catch (_) { return; }
+  const h = hist[idx];
+  if (!h) return;
+  const sidoSel = document.getElementById('sidoSelect');
+  sidoSel.value = h.sido;
+  buildGugun();
+  const gugunSel = document.getElementById('gugunSelect');
+  gugunSel.value = h.lawdCd;
+  document.getElementById('months').value = h.months;
+  doSearch();
+}
+
+// ── Phase 2: 시나리오 저장/비교 ───────────────────────────────────────────────
+function saveScenario() {
+  const inp = readLoanInputs();
+  if (!inp.target) { alert('호가를 먼저 입력하세요.'); return; }
+  const r = computeLoan(inp);
+
+  let scenarios;
+  try { scenarios = JSON.parse(localStorage.getItem('re_scenarios_v1') || '[]'); } catch (_) { scenarios = []; }
+
+  const label = document.getElementById('aptNameInput').value.trim()
+    || `시나리오 ${scenarios.length + 1}`;
+  scenarios.unshift({
+    label,
+    ts: Date.now(),
+    inp: { ...inp },
+    r: {
+      target: r.target, effectiveLoan: r.effectiveLoan, surplus: r.surplus,
+      dsr: r.dsr, dsrStress: r.dsrStress, mp: r.mp,
+      canBuy: r.canBuy, totalAcqCost: r.totalAcqCost,
+    },
+  });
+  if (scenarios.length > 5) scenarios.length = 5;
+  try { localStorage.setItem('re_scenarios_v1', JSON.stringify(scenarios)); } catch (_) {}
+  renderScenarios();
+  alert(`"${label}" 시나리오가 저장됐습니다. (최대 5개)`);
+}
+
+function deleteScenario(idx) {
+  let scenarios;
+  try { scenarios = JSON.parse(localStorage.getItem('re_scenarios_v1') || '[]'); } catch (_) { scenarios = []; }
+  scenarios.splice(idx, 1);
+  try { localStorage.setItem('re_scenarios_v1', JSON.stringify(scenarios)); } catch (_) {}
+  renderScenarios();
+}
+
+function renderScenarios() {
+  const container = document.getElementById('scenarioArea');
+  if (!container) return;
+  let scenarios;
+  try { scenarios = JSON.parse(localStorage.getItem('re_scenarios_v1') || '[]'); } catch (_) { scenarios = []; }
+  if (!scenarios.length) { container.innerHTML = ''; return; }
+
+  const rows = [
+    ['호가',     s => fmtWan(s.r.target)],
+    ['적용대출', s => fmtWan(s.r.effectiveLoan)],
+    ['자금여유', s => `<span style="color:${s.r.canBuy ? '#059669' : '#dc2626'}">${s.r.canBuy ? '+' : '−'}${fmtWan(Math.abs(s.r.surplus))}</span>`],
+    ['취득비용', s => fmtWan(s.r.totalAcqCost)],
+    ['DSR',      s => s.inp.income > 0 ? s.r.dsr.toFixed(1) + '%' : '—'],
+    ['스트레스DSR', s => s.inp.income > 0 ? s.r.dsrStress.toFixed(1) + '%' : '—'],
+    ['월상환액', s => s.r.effectiveLoan > 0 ? fmtWan(Math.round(s.r.mp)) + '/월' : '—'],
+  ];
+
+  const headers = scenarios.map((s, i) =>
+    `<th style="font-size:11px;padding:4px 8px;white-space:nowrap;">
+      ${esc(s.label)}<br>
+      <button class="btn btn-gray" onclick="deleteScenario(${i})" style="font-size:10px;padding:2px 6px;margin-top:2px;">삭제</button>
+    </th>`
+  ).join('');
+
+  const tableRows = rows.map(([rowLabel, fn]) =>
+    `<tr>
+      <td style="font-size:11px;color:#6b7280;font-weight:600;padding:4px 8px;white-space:nowrap;">${rowLabel}</td>
+      ${scenarios.map(s => `<td style="font-size:11px;text-align:right;padding:4px 8px;">${fn(s)}</td>`).join('')}
+    </tr>`
+  ).join('');
+
+  container.innerHTML = `
+    <div class="card" style="margin-top:10px;">
+      <div class="card-title">📋 시나리오 비교 <span style="font-size:11px;font-weight:400;color:#9ca3af;">(최대 5개)</span></div>
+      <div class="tbl-wrap">
+        <table style="width:100%;">
+          <thead><tr><th style="font-size:11px;padding:4px 8px;"></th>${headers}</tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </div>
+    </div>`;
+}
+
+// ── Phase 2: URL 공유 ─────────────────────────────────────────────────────────
+function getShareURL() {
+  const inp = readLoanInputs();
+  const p   = new URLSearchParams();
+  const numFields = [
+    'income','liquidAssets','creditLoan','currentAptPrice','currentMortgage',
+    'creditRate','creditTermMo','minusLimit','minusRate','otherMonthly',
+    'target','kbPrice','ltvPct','rate','term','houseCount',
+  ];
+  numFields.forEach(k => { if (inp[k]) p.set(k, inp[k]); });
+  if (inp.bangGongjeApply) p.set('bgApply', '1');
+  if (inp.isFirstBuyer)   p.set('firstBuy', '1');
+  if (inp.rateType && inp.rateType !== 'hybrid') p.set('rateType', inp.rateType);
+  if (inp.lawdCd) p.set('lawdCd', inp.lawdCd);
+  return `${location.origin}${location.pathname}?${p.toString()}`;
+}
+
+function copyShareURL() {
+  const url = getShareURL();
+  navigator.clipboard.writeText(url).then(() => alert('공유 링크가 복사됐습니다.')).catch(() => prompt('아래 링크를 복사하세요:', url));
+}
+
+function restoreFromURL() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('target') && !p.has('income')) return;
+  const map = {
+    income: 'annualIncome', liquidAssets: 'liquidAssets', creditLoan: 'creditLoan',
+    currentAptPrice: 'currentAptPrice', currentMortgage: 'currentMortgage',
+    creditRate: 'creditRate', creditTermMo: 'creditTerm',
+    minusLimit: 'minusLimit', minusRate: 'minusRate', otherMonthly: 'otherLoanMonthly',
+    target: 'targetPrice', kbPrice: 'kbPrice', ltvPct: 'ltvPct',
+    rate: 'intRate', term: 'loanTerm', houseCount: 'houseCount',
+  };
+  Object.entries(map).forEach(([paramKey, elId]) => {
+    if (p.has(paramKey)) {
+      const el = document.getElementById(elId);
+      if (el) el.value = p.get(paramKey);
+    }
+  });
+  if (p.has('bgApply')) { const el = document.getElementById('bangGongjeCheck'); if (el) el.checked = true; }
+  if (p.has('firstBuy')) { const el = document.getElementById('firstBuyer'); if (el) el.checked = true; }
+  if (p.has('rateType')) { const el = document.getElementById('rateType'); if (el) el.value = p.get('rateType'); }
+}
+
+// ── Phase 3: 양도세 계산 ─────────────────────────────────────────────────────
+function calcTransferTax(acqPrice, sellPrice, holdYears, isAdjusted, houseCount, isLongHoldExempt) {
+  const gain = sellPrice - acqPrice;
+  if (gain <= 0) return { tax: 0, detail: '양도차익 없음' };
+
+  // 1주택 비과세 요건: 보유 2년 이상 (조정지역 거주 2년)
+  if (houseCount === 1 && holdYears >= 2 && (!isAdjusted || holdYears >= 2)) {
+    if (sellPrice <= 120000) return { tax: 0, rate: 0, detail: '1주택 비과세 (12억 이하)' };
+    // 12억 초과분 과세
+    const taxableGain = gain * (sellPrice - 120000) / sellPrice;
+    return calcTransferTaxOnGain(taxableGain, holdYears, houseCount, { partial: true });
+  }
+
+  return calcTransferTaxOnGain(gain, holdYears, houseCount, { isAdjusted });
+}
+
+function calcTransferTaxOnGain(gain, holdYears, houseCount, opts = {}) {
+  // 장기보유특별공제 (1주택·거주 10년 이상 → 최대 80%)
+  let longHoldDeduct = 0;
+  if (houseCount === 1 && holdYears >= 3) {
+    longHoldDeduct = Math.min(holdYears * 8, 80) / 100; // 거주 가정 (8%/년)
+  } else if (houseCount !== 1 && holdYears >= 3 && !opts.isAdjusted) {
+    longHoldDeduct = Math.min(holdYears * 2, 30) / 100; // 다주택 비조정 3년↑ 2%/년
+  }
+  const taxableGain = Math.round(gain * (1 - longHoldDeduct));
+
+  // 기본공제 250만원
+  const afterDeduct = Math.max(0, taxableGain - 250);
+
+  // 누진세율 (2024 기준)
+  const brackets = [
+    { limit: 1400,  rate: 0.06, prev: 0 },
+    { limit: 5000,  rate: 0.15, prev: 126 },
+    { limit: 8800,  rate: 0.24, prev: 576 },
+    { limit: 15000, rate: 0.35, prev: 1536 },
+    { limit: 30000, rate: 0.38, prev: 3706 },
+    { limit: 50000, rate: 0.40, prev: 9406 },
+    { limit: 100000,rate: 0.42, prev: 17406 },
+    { limit: Infinity, rate: 0.45, prev: 38406 },
+  ];
+
+  let incomeTax = 0;
+  for (const b of brackets) {
+    if (afterDeduct <= b.limit) {
+      incomeTax = (afterDeduct - (brackets.indexOf(b) > 0 ? brackets[brackets.indexOf(b)-1].limit : 0)) * b.rate + b.prev;
+      break;
+    }
+  }
+
+  // 조정지역 2주택 +20%, 3주택 이상 +30% 중과 (2026 기준, 한시적 배제 기간 확인 필요)
+  let surcharge = 0;
+  if (opts.isAdjusted && houseCount === 2) surcharge = afterDeduct * 0.20;
+  else if (opts.isAdjusted && houseCount >= 3) surcharge = afterDeduct * 0.30;
+
+  const localTax = (incomeTax + surcharge) * 0.1;
+  const total = Math.round(incomeTax + surcharge + localTax);
+
+  return {
+    tax: total,
+    rate: afterDeduct > 0 ? (total / afterDeduct * 100).toFixed(1) : 0,
+    gain: taxableGain,
+    longHoldDeduct: Math.round(longHoldDeduct * 100),
+    detail: `양도차익 ${fmtWan(taxableGain)} · 장특공 ${Math.round(longHoldDeduct*100)}%`,
+  };
+}
+
+function showTransferTaxCalc() {
+  const container = document.getElementById('transferTaxArea');
+  if (!container) return;
+  const acq  = +document.getElementById('txAcqPrice')?.value  || 0;
+  const sell = +document.getElementById('txSellPrice')?.value || 0;
+  const hold = +document.getElementById('txHoldYears')?.value || 0;
+  const adj  = document.getElementById('txAdjusted')?.checked ?? false;
+  const hs   = +document.getElementById('txHouseCount')?.value || 1;
+  if (!acq || !sell) { container.innerHTML = '<p style="font-size:12px;color:#9ca3af;">취득가와 양도가를 입력하세요.</p>'; return; }
+  const result = calcTransferTax(acq, sell, hold, adj, hs, false);
+  container.innerHTML = `
+    <div class="at-row ${result.tax === 0 ? 'at-ok' : ''}">
+      <span class="at-label">${result.detail}</span>
+      <span class="at-value">${result.tax > 0 ? fmtWan(result.tax) : '비과세'}</span>
+    </div>
+    ${result.rate > 0 ? `<div style="font-size:10px;color:#6b7280;margin-top:4px;">실효세율 ${result.rate}% (지방소득세 포함)</div>` : ''}
+  `;
+}
+
+// ── Phase 4: 다크모드 ─────────────────────────────────────────────────────────
+function initDarkMode() {
+  const saved = localStorage.getItem('re_dark_mode');
+  if (saved === '1') applyDarkMode(true);
+}
+
+function toggleDarkMode() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  applyDarkMode(!isDark);
+}
+
+function applyDarkMode(on) {
+  document.documentElement.setAttribute('data-theme', on ? 'dark' : '');
+  const btn = document.getElementById('darkToggleBtn');
+  if (btn) btn.textContent = on ? '☀️' : '🌙';
+  try { localStorage.setItem('re_dark_mode', on ? '1' : '0'); } catch (_) {}
+}
+
+// ── Phase 4: 인쇄 단축키 도움말 ──────────────────────────────────────────────
+function showShortcutHelp() {
+  alert('단축키\nCtrl+Enter: 조회\nCtrl+S: 시나리오 저장\nCtrl+E: CSV 내보내기\nEsc: 아파트 선택 해제');
+}
+
+// ── Phase 5: withRetry (exponential backoff) ──────────────────────────────────
+async function withRetry(fn, maxRetry = 2) {
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetry; attempt++) {
+    try { return await fn(); }
+    catch (err) {
+      lastErr = err;
+      if (attempt < maxRetry) await new Promise(r => setTimeout(r, 400 * Math.pow(2, attempt)));
+    }
+  }
+  throw lastErr;
 }

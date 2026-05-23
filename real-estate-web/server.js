@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
 const xml2js = require('xml2js');
@@ -6,7 +7,7 @@ const path = require('path');
 const app = express();
 const PORT = 3000;
 
-const SERVICE_KEY_ENC = 'pHwAwOqY5MgPmKutn6Tmyp%2FxKHQfzEzPDxc6hZIGGrInArN0o0Xe7aIgmM7zUcVmXai1BlKSZq1YJ%2FaKUJmQig%3D%3D';
+const SERVICE_KEY_ENC = process.env.SERVICE_KEY_ENC;
 const API_BASE = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade';
 const PAGE_SIZE = 1000;
 

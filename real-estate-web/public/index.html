@@ -5,12 +5,39 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>🏠 부동산 대출 분석기</title>
   <style>
+    :root {
+      --bg-page:    #eef2f7;
+      --bg-card:    #ffffff;
+      --bg-input:   #ffffff;
+      --text-main:  #111827;
+      --text-muted: #6b7280;
+      --text-hint:  #9ca3af;
+      --border:     #e5e7eb;
+      --bg-row-alt: #f9fafb;
+      --bg-ok:      #f0fdf4;
+      --bg-warn:    #fffbeb;
+      --bg-fail:    #fef2f2;
+    }
+    [data-theme="dark"] {
+      --bg-page:    #0f172a;
+      --bg-card:    #1e293b;
+      --bg-input:   #1e293b;
+      --text-main:  #f1f5f9;
+      --text-muted: #94a3b8;
+      --text-hint:  #64748b;
+      --border:     #334155;
+      --bg-row-alt: #1a2840;
+      --bg-ok:      #14291e;
+      --bg-warn:    #29260d;
+      --bg-fail:    #291414;
+    }
+
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans KR', sans-serif;
-      background: #eef2f7;
-      color: #111827;
+      background: var(--bg-page);
+      color: var(--text-main);
       min-height: 100vh;
       font-size: 14px;
     }
@@ -54,7 +81,7 @@
 
     /* ── Cards ── */
     .card {
-      background: #fff;
+      background: var(--bg-card);
       border-radius: 12px;
       padding: 16px 18px;
       box-shadow: 0 1px 4px rgba(0,0,0,.07);
@@ -64,7 +91,7 @@
     .card-title {
       font-size: 13px;
       font-weight: 700;
-      color: #0f172a;
+      color: var(--text-main);
       margin-bottom: 12px;
       display: flex;
       align-items: center;
@@ -81,17 +108,17 @@
 
     input[type=number], input[type=text], input[type=month], select {
       padding: 7px 10px;
-      border: 1.5px solid #e2e8f0;
+      border: 1.5px solid var(--border);
       border-radius: 7px;
       font-size: 12px;
-      color: #0f172a;
-      background: #f8fafc;
+      color: var(--text-main);
+      background: var(--bg-input);
       outline: none;
       transition: border-color .18s, background .18s;
       min-width: 0;
       width: 100%;
     }
-    input:focus, select:focus { border-color: #3b82f6; background: #fff; }
+    input:focus, select:focus { border-color: #3b82f6; background: var(--bg-input); }
 
     .sfx { position: relative; }
     .sfx input { padding-right: 28px; }
@@ -180,15 +207,15 @@
     .at-row {
       display: flex; justify-content: space-between; align-items: baseline;
       padding: 5px 4px;
-      border-bottom: 1px solid #f8fafc;
+      border-bottom: 1px solid var(--border);
     }
     .at-row:last-child { border-bottom: none; }
-    .at-label { font-size: 12px; color: #374151; flex: 1; }
-    .at-hint { font-size: 10px; color: #9ca3af; margin-left: 3px; }
-    .at-value { font-size: 13px; font-weight: 800; color: #0f172a; text-align: right; white-space: nowrap; margin-left: 8px; }
+    .at-label { font-size: 12px; color: var(--text-muted); flex: 1; }
+    .at-hint { font-size: 10px; color: var(--text-hint); margin-left: 3px; }
+    .at-value { font-size: 13px; font-weight: 800; color: var(--text-main); text-align: right; white-space: nowrap; margin-left: 8px; }
 
     .at-key {
-      background: #f8fafc;
+      background: var(--bg-row-alt);
       border-radius: 7px;
       padding: 7px 10px;
       margin: 4px 0;
@@ -228,6 +255,15 @@
       border: none; background: none;
       accent-color: #2563eb;
     }
+
+    @media print {
+      header, .left-col, #searchHistoryRow, #scenarioArea,
+      .btn, button, details > summary { display: none !important; }
+      .layout { display: block; }
+      .right { position: static !important; max-height: none !important; overflow: visible !important; }
+      .card { box-shadow: none; border: 1px solid #e5e7eb; page-break-inside: avoid; }
+      body { background: #fff; color: #000; font-size: 11px; }
+    }
   </style>
 </head>
 <body>
@@ -237,7 +273,10 @@
     <h1>🏠 부동산 대출 분석기</h1>
     <div class="sub">국토교통부 실거래가 기반 · LTV / DSR / 스트레스 DSR 자동 계산</div>
   </div>
-  <div id="updateBadge">데이터 미조회</div>
+  <div style="display:flex;align-items:center;gap:10px;">
+    <button id="darkToggleBtn" onclick="toggleDarkMode()" style="background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:5px 12px;font-size:13px;color:#bfdbfe;cursor:pointer;" title="다크모드 토글">🌙</button>
+    <div id="updateBadge">데이터 미조회</div>
+  </div>
 </header>
 
 <div class="layout">
@@ -279,8 +318,10 @@
         </div>
         <button class="btn btn-blue" onclick="doSearch()">🔍 조회</button>
         <button class="btn btn-gray" id="rentBtn" onclick="loadRentData()" style="font-size:11px;">📋 전세가율</button>
+        <button class="btn btn-gray" onclick="exportCSV()" style="font-size:11px;">📥 CSV</button>
       </div>
 
+      <div id="searchHistoryRow"></div>
       <div id="statsRow"></div>
       <div id="dongChipsRow"></div>
       <div id="areaChipsRow"></div>
@@ -428,6 +469,16 @@
           </select>
         </div>
         <div class="fg">
+          <label>거치기간 <span style="font-size:10px;color:#6b7280;font-weight:400;">(이자만 납부)</span></label>
+          <select id="gracePeriod" onchange="calcAll()">
+            <option value="0" selected>없음</option>
+            <option value="1">1년</option>
+            <option value="2">2년</option>
+            <option value="3">3년</option>
+            <option value="5">5년</option>
+          </select>
+        </div>
+        <div class="fg">
           <label>주택 보유 수</label>
           <select id="houseCount" onchange="onHouseCountChange()">
             <option value="0">무주택</option>
@@ -438,11 +489,59 @@
       </div>
     </div>
 
+    <!-- 양도세 계산기 -->
+    <details class="card" style="padding:0;">
+      <summary style="padding:12px 16px;font-size:13px;font-weight:700;cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px;">
+        <span>▶</span> 🏷️ 양도세 계산기 <span style="font-size:11px;font-weight:400;color:#9ca3af;">(클릭하여 펼치기)</span>
+      </summary>
+      <div style="padding:0 16px 16px;">
+        <div class="form-grid">
+          <div class="fg">
+            <label>취득가 (만원)</label>
+            <input type="number" id="txAcqPrice" placeholder="예: 50000" oninput="showTransferTaxCalc()" />
+          </div>
+          <div class="fg">
+            <label>양도가 (만원)</label>
+            <input type="number" id="txSellPrice" placeholder="예: 80000" oninput="showTransferTaxCalc()" />
+          </div>
+          <div class="fg">
+            <label>보유 기간 (년)</label>
+            <input type="number" id="txHoldYears" value="3" min="0" max="30" step="1" oninput="showTransferTaxCalc()" />
+          </div>
+          <div class="fg">
+            <label>주택 수</label>
+            <select id="txHouseCount" onchange="showTransferTaxCalc()">
+              <option value="1">1주택</option>
+              <option value="2">2주택</option>
+              <option value="3">3주택 이상</option>
+            </select>
+          </div>
+          <div class="fg" style="grid-column:1/-1;">
+            <label style="display:flex;align-items:center;gap:6px;">
+              <input type="checkbox" id="txAdjusted" onchange="showTransferTaxCalc()" />
+              조정대상지역 (다주택 중과 적용)
+            </label>
+          </div>
+        </div>
+        <div id="transferTaxArea" style="margin-top:10px;"></div>
+        <p style="font-size:10px;color:#9ca3af;margin-top:8px;">※ 장기보유특별공제: 1주택 거주 가정 8%/년(최대80%) · 다주택 비조정 2%/년(최대30%) · 기본공제 250만원 포함<br>※ 조정 다주택 중과: 2주택+20%p / 3주택+30%p | 지방소득세 10% 포함 | 실제 세액은 세무사 확인 필요</p>
+      </div>
+    </details>
+
     <!-- 분석 결과 -->
     <div class="card">
-      <div class="card-title">📊 투자 분석 결과</div>
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+        📊 투자 분석 결과
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-gray" onclick="copyShareURL()" style="font-size:11px;">🔗 공유</button>
+          <button class="btn btn-gray" onclick="saveScenario()" style="font-size:11px;">💾 시나리오 저장</button>
+        </div>
+      </div>
       <div id="resultArea"><div class="empty">호가를 입력하면 자동으로 계산됩니다.</div></div>
     </div>
+
+    <!-- 시나리오 비교 -->
+    <div id="scenarioArea"></div>
 
   </div>
 </div>
