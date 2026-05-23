@@ -1657,7 +1657,10 @@ function addCompareApt(aptName, checked) {
     selectedCompareApts.delete(aptName);
     delete compareAptTrades[aptName];
   }
-  renderTable(); // 체크박스 상태 즉시 동기화
+  // renderTable() 호출 금지: 현재 filteredTrades에 없는 단지(다른 검색결과)의
+  // 체크박스가 테이블에서 사라지는 것처럼 보이는 문제 유발.
+  // 브라우저 네이티브 체크박스가 즉시 반영되고, fetchAllSupplyAreas 완료 시
+  // renderTable()이 selectedCompareApts 기준으로 올바르게 렌더링함.
   renderCompareChart();
 }
 
