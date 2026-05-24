@@ -256,6 +256,7 @@ let selectedDongs = new Set();  // empty = 전체, Set<string> = 법정동명
 let sortKey       = 'date'; // 정렬 기준 컬럼
 let sortDir       = -1;     // 1 = 오름차순, -1 = 내림차순
 let _chart        = null;   // Chart.js 인스턴스
+let _volumeChart  = null;   // 거래량 bar 차트
 let _compareChart = null;   // 단지 비교 Chart.js 인스턴스
 let selectedCompareApts = new Set(); // 최대 6개
 let compareAptTrades   = {};        // { aptName: trades[] } — 체크 시점 스냅샷, 필터 변경에 독립
@@ -660,6 +661,7 @@ function renderChart(trades) {
   if (!trades.length) {
     el.style.display = 'none';
     if (_chart) { _chart.destroy(); _chart = null; }
+    if (_volumeChart) { _volumeChart.destroy(); _volumeChart = null; }
     return;
   }
 
@@ -676,6 +678,7 @@ function renderChart(trades) {
   if (labels.length < 2) {
     el.style.display = 'none';
     if (_chart) { _chart.destroy(); _chart = null; }
+    if (_volumeChart) { _volumeChart.destroy(); _volumeChart = null; }
     return;
   }
 
@@ -764,6 +767,43 @@ function renderChart(trades) {
       scales,
     },
   });
+
+  // ── 거래량 bar 차트 ──
+  const volCanvas = document.getElementById('volumeCanvas');
+  if (volCanvas) {
+    if (_volumeChart) { _volumeChart.destroy(); _volumeChart = null; }
+    const volData = labels.map(k => monthly[k].cnt);
+    _volumeChart = new Chart(volCanvas, {
+      type: 'bar',
+      data: {
+        labels: labels.map(l => l.replace('-', '년 ') + '월'),
+        datasets: [{
+          label: '거래 건수',
+          data: volData,
+          backgroundColor: 'rgba(37,99,235,0.55)',
+          borderColor: 'rgba(37,99,235,0.8)',
+          borderWidth: 1,
+          borderRadius: 3,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y}건` } },
+        },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { callback: v => v + '건', font: { size: 10 } },
+            grid: { color: 'rgba(0,0,0,0.05)' },
+          },
+          x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+        },
+      },
+    });
+  }
 }
 
 // ── 전세가율 ──────────────────────────────────────────────────────────────────
@@ -876,16 +916,22 @@ function renderStats() {
   if (!filteredTrades.length) { box.innerHTML = ''; return; }
 
   const prices = filteredTrades.map(t => t.dealAmount);
-  const max = Math.max(...prices);
-  const min = Math.min(...prices);
-  const avg = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+  const sorted = [...prices].sort((a, b) => a - b);
+  const max    = sorted[sorted.length - 1];
+  const min    = sorted[0];
+  const avg    = Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+  const mid    = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 0
+    ? Math.round((sorted[mid - 1] + sorted[mid]) / 2)
+    : sorted[mid];
 
   box.innerHTML = `
-    <div class="stats-row">
+    <div class="stats-row" style="grid-template-columns:repeat(5,1fr);">
       <div class="stat-box"><div class="sl">거래 건수</div><div class="sv">${filteredTrades.length.toLocaleString()}건</div></div>
       <div class="stat-box"><div class="sl">최고가</div><div class="sv">${fmtWan(max)}</div></div>
       <div class="stat-box"><div class="sl">최저가</div><div class="sv">${fmtWan(min)}</div></div>
       <div class="stat-box"><div class="sl">평균가</div><div class="sv">${fmtWan(avg)}</div></div>
+      <div class="stat-box"><div class="sl">중위가</div><div class="sv">${fmtWan(median)}</div></div>
     </div>
   `;
 }
@@ -1333,23 +1379,15 @@ async function fetchBuildingSupplyArea(sggCd, jibun, excluArea) {
   if (!jibun || !sggCd) return null;
   const [bun, ji] = parseJibun(jibun);
   const cacheKey  = `${sggCd}|${bun}|${ji}`;
-  console.log('[건축물대장 조회]', { sggCd, jibun, bun, ji, excluArea });
   if (_bldgCache[cacheKey]) {
-    const r = findSupplyArea(_bldgCache[cacheKey], excluArea);
-    console.log('[건축물대장 캐시 hit]', { cacheKey, result: r });
-    return r;
+    return findSupplyArea(_bldgCache[cacheKey], excluArea);
   }
   try {
-    const url = `/api/building-area?sigunguCd=${sggCd}&bun=${bun}&ji=${ji}`;
-    console.log('[건축물대장 API 요청]', url);
-    const res  = await fetch(url);
+    const res  = await fetch(`/api/building-area?sigunguCd=${sggCd}&bun=${bun}&ji=${ji}`);
     const data = await res.json();
-    console.log('[건축물대장 API 응답]', { ok: res.ok, count: data.count, areaMapKeys: Object.keys(data.areaMap || {}), areaMap: data.areaMap });
     if (!res.ok || !data.areaMap) return null;
     _bldgCache[cacheKey] = data.areaMap;
-    const result = findSupplyArea(data.areaMap, excluArea);
-    console.log('[건축물대장 매칭 결과]', { excluArea, result, areaMapKeys: Object.keys(data.areaMap) });
-    return result;
+    return findSupplyArea(data.areaMap, excluArea);
   } catch (e) {
     console.error('[건축물대장 오류]', e);
     return null;
@@ -1456,12 +1494,20 @@ function replaySearch(idx) {
   try { hist = JSON.parse(localStorage.getItem('re_search_hist_v1') || '[]'); } catch (_) { return; }
   const h = hist[idx];
   if (!h) return;
-  const sidoSel = document.getElementById('sidoSelect');
-  sidoSel.value = h.sido;
+  document.getElementById('sidoSel').value = h.sido;
   buildGugun();
-  const gugunSel = document.getElementById('gugunSelect');
-  gugunSel.value = h.lawdCd;
-  document.getElementById('months').value = h.months;
+  document.getElementById('gugunSel').value = h.lawdCd;
+  const months = h.months;
+  if (Array.isArray(months) && months.length > 1) {
+    document.getElementById('rangeMode').checked = true;
+    toggleRangeMode();
+    document.getElementById('startMonth').value = months[0];
+    document.getElementById('endMonth').value   = months[months.length - 1];
+  } else {
+    document.getElementById('rangeMode').checked = false;
+    toggleRangeMode();
+    document.getElementById('dealMonth').value = Array.isArray(months) ? months[0] : months;
+  }
   doSearch();
 }
 

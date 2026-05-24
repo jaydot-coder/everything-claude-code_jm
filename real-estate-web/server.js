@@ -59,11 +59,6 @@ async function fetchAptPage(lawdCd, dealYmd, pageNo) {
 
 function mapTrades(items) {
   // 첫 번째 아이템의 필드 목록 확인 (개발 디버그)
-  if (items.length > 0) {
-    const sample = items[0];
-    console.log('[mapTrades 전체 키]', Object.keys(sample).join(', '));
-    console.log('[mapTrades 샘플]', JSON.stringify(sample));
-  }
   return items
     .map(item => ({
       aptName:    item.aptNm       || '',
@@ -252,7 +247,6 @@ async function findBjdongCd(sigunguCd, bun, ji) {
     const found = results.find(r => r.cnt > 0);
     if (found) {
       _bjdongCache[cacheKey] = found.bjd;
-      console.log(`[Bldg bjdong 캐시] ${cacheKey} → ${found.bjd}`);
       return found.bjd;
     }
     if (i + BATCH < candidates.length) await new Promise(r => setTimeout(r, 200));
@@ -283,7 +277,6 @@ async function fetchBldgItems(sigunguCd, bjdongCd, bun, ji) {
 
     if (totalCount === null) {
       totalCount = parseInt(r.data?.response?.body?.totalCount || 0);
-      console.log(`[Bldg fetchItems] totalCount=${totalCount}`);
     }
 
     let items = r.data?.response?.body?.items?.item || [];
@@ -359,19 +352,16 @@ app.get('/api/building-area', async (req, res) => {
     // bjdongCd가 전달되지 않으면 자동 탐색
     let bjdongCd = bjdParam || await findBjdongCd(sigunguCd, bunPad, jiPad);
     if (!bjdongCd) {
-      console.log(`[Bldg API] bjdongCd 탐색 실패 - sigunguCd=${sigunguCd} bun=${bunPad}`);
+
       return res.json({ areaMap: {}, count: 0 });
     }
 
     const serverCacheKey = `${sigunguCd}|${bjdongCd}|${bunPad}|${jiPad}`;
     if (_areaMapCache[serverCacheKey]) {
-      console.log(`[Bldg API 캐시 hit] ${serverCacheKey}`);
       return res.json({ ..._areaMapCache[serverCacheKey], bjdongCd, cached: true });
     }
 
-    console.log(`[Bldg API] sigunguCd=${sigunguCd} bjdongCd=${bjdongCd} bun=${bunPad} ji=${jiPad}`);
     const items = await fetchBldgItems(sigunguCd, bjdongCd, bunPad, jiPad);
-    console.log(`[Bldg API] items=${items.length}`);
 
     const areaMap = calcAreaMap(items);
     _areaMapCache[serverCacheKey] = { areaMap, count: items.length };
