@@ -5,7 +5,7 @@ const xml2js = require('xml2js');
 const path = require('path');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 const SERVICE_KEY_ENC = process.env.SERVICE_KEY_ENC;
 const API_BASE = 'http://apis.data.go.kr/1613000/RTMSDataSvcAptTrade/getRTMSDataSvcAptTrade';

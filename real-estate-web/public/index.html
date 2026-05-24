@@ -138,6 +138,11 @@
     .btn-gray:hover  { background: #e2e8f0; }
     .btn-green { background: #059669; color: #fff; font-size: 11px; padding: 5px 10px; border-radius: 5px; }
     .btn-green:hover { filter: brightness(1.1); }
+    .cmp-y-btn {
+      font-size: 10px; padding: 2px 10px; border-radius: 4px; cursor: pointer;
+      border: 1px solid var(--border); background: var(--bg-card); color: var(--text-muted);
+    }
+    .cmp-y-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
     /* ── Stats row ── */
     .stats-row {
@@ -387,12 +392,21 @@
         <div style="position:relative;height:160px;"><canvas id="trendCanvas"></canvas></div>
       </div>
       <div id="compareChartArea" style="display:none;background:var(--bg-card);border-radius:10px;padding:12px 16px;box-shadow:0 1px 4px rgba(0,0,0,.07);margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-          <span style="font-size:10px;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">📊 단지 비교 — 월별 평균 거래가</span>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <span style="font-size:10px;font-weight:800;color:#6b7280;text-transform:uppercase;letter-spacing:.5px;">📊 단지 비교</span>
           <button class="btn btn-gray" onclick="clearCompareApts()" style="font-size:10px;padding:2px 8px;">❌ 비교 해제</button>
         </div>
         <div id="compareStatus" style="font-size:11px;color:#9ca3af;margin-bottom:6px;"></div>
-        <div style="position:relative;height:180px;"><canvas id="compareCanvas"></canvas></div>
+        <div style="display:flex;gap:4px;margin-bottom:8px;">
+          <button id="cmpBtn-price" class="cmp-y-btn active" onclick="setCompareYMode('price')">가격</button>
+          <button id="cmpBtn-pct"   class="cmp-y-btn"        onclick="setCompareYMode('pct')">% 변화</button>
+          <button id="cmpBtn-diff"  class="cmp-y-btn"        onclick="setCompareYMode('diff')">절대 변화</button>
+        </div>
+        <div style="overflow-x:auto;overflow-y:auto;max-height:280px;">
+          <div style="position:relative;height:220px;min-width:560px;">
+            <canvas id="compareCanvas"></canvas>
+          </div>
+        </div>
       </div>
       <div id="tableArea"><div class="empty">지역과 거래 월 선택 후 <strong>조회</strong> 버튼을 눌러주세요.</div></div>
       <div id="rentArea"></div>

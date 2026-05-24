@@ -257,8 +257,9 @@ let sortKey       = 'date'; // 정렬 기준 컬럼
 let sortDir       = -1;     // 1 = 오름차순, -1 = 내림차순
 let _chart        = null;   // Chart.js 인스턴스
 let _compareChart = null;   // 단지 비교 Chart.js 인스턴스
-let selectedCompareApts = new Set(); // 최대 3개
+let selectedCompareApts = new Set(); // 최대 6개
 let compareAptTrades   = {};        // { aptName: trades[] } — 체크 시점 스냅샷, 필터 변경에 독립
+let compareYMode       = 'price';   // 'price' | 'pct' | 'diff'
 let _rentData     = null;   // { rents:[], map:{} }
 let _bldgCache    = {};     // key:"sggCd|bun|ji" → areaMap
 let _supplyFetchAbort = null; // fetchAllSupplyAreas 취소 신호
@@ -911,7 +912,8 @@ function renderTable() {
     const changeBadge = changePct != null
       ? `<span style="font-size:10px;margin-left:4px;color:${+changePct > 0 ? '#ef4444' : '#3b82f6'}">
           ${+changePct > 0 ? '▲' : '▼'}${Math.abs(changePct)}%</span>` : '';
-    const isCmpChecked = selectedCompareApts.has(t.aptName);
+    const cmpKey      = `${t.aptName}|${Math.round(t.area)}`;
+    const isCmpChecked = selectedCompareApts.has(cmpKey);
     return `<tr>
       <td class="t-apt">${esc(t.aptName)}${isHigh ? ' <span style="font-size:10px;background:#fef9c3;color:#854d0e;padding:1px 4px;border-radius:3px;font-weight:600;">신고가</span>' : ''}</td>
       <td class="t-muted" style="white-space:nowrap;">${esc(t.dong)}</td>
@@ -923,8 +925,8 @@ function renderTable() {
       <td class="t-muted">${t.buildYear}</td>
       <td style="white-space:nowrap;display:flex;gap:4px;align-items:center;">
         <button class="btn btn-green" onclick="pickTrade(${t.dealAmount},'${esc(t.aptName)}',${t.area},'${esc(t.jibun)}','${t.sggCd}')">선택</button>
-        <label title="단지 비교 차트에 추가 (최대 3개)" style="cursor:pointer;font-size:10px;color:#6b7280;display:flex;align-items:center;gap:2px;">
-          <input type="checkbox" ${isCmpChecked ? 'checked' : ''} onchange="addCompareApt('${esc(t.aptName)}',this.checked)" style="width:auto;min-width:unset;padding:0;border:none;accent-color:#2563eb;" />비교
+        <label title="단지+평수 비교 차트에 추가 (최대 6개)" style="cursor:pointer;font-size:10px;color:#6b7280;display:flex;align-items:center;gap:2px;">
+          <input type="checkbox" ${isCmpChecked ? 'checked' : ''} onchange="addCompareApt('${esc(t.aptName)}',${Math.round(t.area)},this.checked)" style="width:auto;min-width:unset;padding:0;border:none;accent-color:#2563eb;" />비교
         </label>
       </td>
     </tr>`;
@@ -1642,25 +1644,33 @@ async function withRetry(fn, maxRetry = 2) {
 }
 
 // ── Plan B: 단지 간 비교 차트 ─────────────────────────────────────────────────
-function addCompareApt(aptName, checked) {
+// cmpKey 형식: "아파트명|areaKey(㎡ 반올림)" — 평수별 독립 비교를 위해 면적 포함
+function addCompareApt(aptName, areaKey, checked) {
+  const cmpKey = `${aptName}|${areaKey}`;
   if (checked) {
-    if (selectedCompareApts.size >= 3) {
+    if (selectedCompareApts.size >= 6) {
       const status = document.getElementById('compareStatus');
-      if (status) status.textContent = '최대 3개까지 선택할 수 있습니다.';
+      if (status) status.textContent = '최대 6개까지 선택할 수 있습니다.';
       renderTable();
       return;
     }
-    selectedCompareApts.add(aptName);
-    // 체크 시점의 allTrades 스냅샷 저장 (이후 필터 변경 / 재조회에 독립)
-    compareAptTrades[aptName] = allTrades.filter(t => t.aptName === aptName);
+    selectedCompareApts.add(cmpKey);
+    // 체크 시점의 apt+면적 스냅샷 — 이후 필터 변경·재조회에 독립
+    compareAptTrades[cmpKey] = allTrades.filter(t => t.aptName === aptName && Math.round(t.area) === areaKey);
   } else {
-    selectedCompareApts.delete(aptName);
-    delete compareAptTrades[aptName];
+    selectedCompareApts.delete(cmpKey);
+    delete compareAptTrades[cmpKey];
   }
   // renderTable() 호출 금지: 현재 filteredTrades에 없는 단지(다른 검색결과)의
-  // 체크박스가 테이블에서 사라지는 것처럼 보이는 문제 유발.
-  // 브라우저 네이티브 체크박스가 즉시 반영되고, fetchAllSupplyAreas 완료 시
-  // renderTable()이 selectedCompareApts 기준으로 올바르게 렌더링함.
+  // 체크박스가 사라지는 것처럼 보이는 문제 유발.
+  renderCompareChart();
+}
+
+function setCompareYMode(mode) {
+  compareYMode = mode;
+  ['price', 'pct', 'diff'].forEach(m =>
+    document.getElementById(`cmpBtn-${m}`)?.classList.toggle('active', m === mode)
+  );
   renderCompareChart();
 }
 
@@ -1685,28 +1695,64 @@ function renderCompareChart() {
   }
 
   area.style.display = 'block';
-  const status = document.getElementById('compareStatus');
-  if (status) status.textContent = `선택 단지: ${[...selectedCompareApts].join(' · ')}  (최대 3개)`;
 
-  // 단지별 월평균가 집계 — compareAptTrades 캐시 사용 (필터/재조회에 독립)
-  const COLORS = ['#2563eb', '#dc2626', '#059669'];
-  const datasets = [...selectedCompareApts].map((name, i) => {
-    const trades = compareAptTrades[name] || [];
-    const monthly = {};
-    trades.forEach(t => {
-      const key = `${t.year}-${String(t.month).padStart(2,'0')}`;
-      if (!monthly[key]) monthly[key] = { sum: 0, cnt: 0 };
-      monthly[key].sum += t.dealAmount;
-      monthly[key].cnt += 1;
-    });
-    return { name, monthly };
+  // cmpKey = "아파트명|areaKey" 파싱 → 차트 레이블에 평수 표시
+  const COLORS = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2'];
+  const entries = [...selectedCompareApts].map(cmpKey => {
+    const barIdx = cmpKey.lastIndexOf('|');
+    const name   = cmpKey.slice(0, barIdx);
+    const areaM2 = Number(cmpKey.slice(barIdx + 1));
+    const pyeong = Math.round(areaM2 / 3.3058);
+    const label  = `${name} (${pyeong}평·${areaM2}㎡)`;
+    return { cmpKey, label };
   });
 
-  // 모든 캐시 단지의 거래 기간을 합산해 라벨 생성
+  const status = document.getElementById('compareStatus');
+  if (status) status.textContent = `선택: ${entries.map(e => e.label).join(' · ')}  (최대 6개)`;
+
+  // 단지+면적별 월평균가 집계 — compareAptTrades 캐시 사용 (필터/재조회에 독립)
+  const rawDatasets = entries.map(({ cmpKey, label }) => {
+    const trades = compareAptTrades[cmpKey] || [];
+    const monthly = {};
+    trades.forEach(t => {
+      const k = `${t.year}-${String(t.month).padStart(2,'0')}`;
+      if (!monthly[k]) monthly[k] = { sum: 0, cnt: 0 };
+      monthly[k].sum += t.dealAmount;
+      monthly[k].cnt += 1;
+    });
+    return { label, monthly };
+  });
+
+  // 모든 캐시 항목의 거래 기간을 합산해 X축 라벨 생성
   const allLabels = [...new Set(
     Object.values(compareAptTrades).flat()
       .map(t => `${t.year}-${String(t.month).padStart(2,'0')}`)
   )].sort();
+
+  // 시리즈별 원시 월평균가 배열
+  const rawValues = rawDatasets.map(({ monthly }) =>
+    allLabels.map(k => monthly[k] ? Math.round(monthly[k].sum / monthly[k].cnt) : null)
+  );
+
+  // Y축 모드에 따라 시리즈 변환
+  function transformSeries(vals) {
+    if (compareYMode === 'price') return vals;
+    const base = vals.find(v => v !== null);
+    if (base == null) return vals;
+    if (compareYMode === 'pct') {
+      return vals.map(v => v !== null ? Math.round((v - base) / base * 1000) / 10 : null);
+    }
+    return vals.map(v => v !== null ? v - base : null);
+  }
+
+  const yTickFn =
+    compareYMode === 'pct' ? v => `${v > 0 ? '+' : ''}${v}%`
+    : v => fmtWan(v);
+
+  const tooltipFn =
+    compareYMode === 'pct'  ? ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y > 0 ? '+' : ''}${ctx.parsed.y}%`
+    : compareYMode === 'diff' ? ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y >= 0 ? '+' : ''}${fmtWan(ctx.parsed.y)}`
+    : ctx => ` ${ctx.dataset.label}: ${fmtWan(ctx.parsed.y)}`;
 
   if (_compareChart) { _compareChart.destroy(); _compareChart = null; }
 
@@ -1714,13 +1760,13 @@ function renderCompareChart() {
     type: 'line',
     data: {
       labels: allLabels,
-      datasets: datasets.map(({ name, monthly }, i) => ({
-        label: name,
-        data: allLabels.map(k => monthly[k] ? Math.round(monthly[k].sum / monthly[k].cnt) : null),
+      datasets: rawDatasets.map(({ label }, i) => ({
+        label,
+        data: transformSeries(rawValues[i]),
         borderColor: COLORS[i % COLORS.length],
         backgroundColor: COLORS[i % COLORS.length] + '18',
         tension: 0.3,
-        fill: false,
+        fill: compareYMode !== 'price',
         pointRadius: 4,
         spanGaps: true,
       })),
@@ -1730,10 +1776,14 @@ function renderCompareChart() {
       interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12 } },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtWan(ctx.parsed.y)}` } },
+        tooltip: { callbacks: { label: tooltipFn } },
       },
       scales: {
-        y: { ticks: { callback: v => fmtWan(v), font: { size: 10 } }, grid: { color: '#f1f5f9' } },
+        y: {
+          ticks: { callback: yTickFn, font: { size: 10 } },
+          grid: { color: '#f1f5f9' },
+          ...(compareYMode !== 'price' && { beginAtZero: false }),
+        },
         x: { ticks: { font: { size: 10 } }, grid: { display: false } },
       },
     },
