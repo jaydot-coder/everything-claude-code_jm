@@ -118,7 +118,8 @@
       "WebFetch(domain:toss.im)",
       "WebFetch(domain:www.bank-mall.co.kr)",
       "WebFetch(domain:files-scs.pstatic.net)",
-      "WebFetch(domain:www.newsis.com)"
+      "WebFetch(domain:www.newsis.com)",
+      "mcp__plugin_everything-claude-code_playwright__browser_navigate"
     ]
   }
 }
